@@ -112,6 +112,12 @@ defmodule ExMCP.MixProject do
       {:fuse, "~> 2.4", optional: true},
       # MCP protocol support
       {:ex_json_schema, "~> 0.10"},
+      # Security floor: 3.1.2 fixes EEF-CVE-2026-97853 (unbounded allocation
+      # in Decimal.round/3 via places). Not used directly; declared so
+      # consumers cannot resolve 3.1.1 through ex_json_schema's `~> 3.0`.
+      # 3.1.2 requires Elixir ~> 1.12 and remains compatible with the OTP
+      # 27.0 / Elixir 1.17.3 CI matrix entry.
+      {:decimal, "~> 3.1 and >= 3.1.2"},
       {:html_entities, "~> 0.5", only: [:dev, :test]},
       {:propcheck, "~> 1.4", only: :test},
       {:benchee, "~> 1.0", only: [:dev, :test]},
