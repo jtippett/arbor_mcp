@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- Send the OAuth `resource` parameter exactly as published in protected
+  resource metadata, including pathless identifiers that must not gain a
+  trailing slash from URL normalization.
+
 ## [1.6.0] - 2026-10-08
 
 ### Fixed
