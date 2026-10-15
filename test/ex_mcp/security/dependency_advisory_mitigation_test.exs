@@ -5,15 +5,29 @@ defmodule ExMCP.Security.DependencyAdvisoryMitigationTest do
 
   import Plug.Test
 
+  alias Mix.Dep.Lock
+  alias Mix.Project
+
   test "Mint requirement and lock exclude versions affected by September 2026 advisories" do
-    mint_dep = List.keyfind(Mix.Project.config()[:deps], :mint, 0)
+    mint_dep = List.keyfind(Project.config()[:deps], :mint, 0)
     requirement = elem(mint_dep, 1)
 
     assert Version.match?("1.10.2", requirement)
     refute Version.match?("1.10.1", requirement)
 
-    locked_version = Mix.Dep.Lock.read()[:mint] |> elem(2)
+    locked_version = Lock.read()[:mint] |> elem(2)
     assert Version.compare(locked_version, "1.10.2") in [:eq, :gt]
+  end
+
+  test "Decimal requirement and lock exclude versions affected by EEF-CVE-2026-97853" do
+    decimal_dep = List.keyfind(Project.config()[:deps], :decimal, 0)
+    requirement = elem(decimal_dep, 1)
+
+    assert Version.match?("3.1.2", requirement)
+    refute Version.match?("3.1.1", requirement)
+
+    locked_version = Lock.read()[:decimal] |> elem(2)
+    assert Version.compare(locked_version, "3.1.2") in [:eq, :gt]
   end
 
   test "Plug rejects response-header bytes covered by EEF-CVE-2026-43966" do

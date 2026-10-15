@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Bump `decimal` to 3.1.2, which fixes `EEF-CVE-2026-97853` (unbounded
+  allocation in `Decimal.round/3` via `places`). The requirement is now
+  `~> 3.1 and >= 3.1.2` so consumers cannot resolve 3.1.1. 3.1.2 requires
+  Elixir `~> 1.12` and remains compatible with the OTP 27.0 / Elixir 1.17.3
+  CI matrix entry.
+
 ### Fixed
 
 - Send the OAuth `resource` parameter exactly as published in protected
