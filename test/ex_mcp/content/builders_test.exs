@@ -124,6 +124,35 @@ defmodule ExMCP.Content.BuildersTest do
       assert is_binary(image_content.data)
     end
 
+    test "from_file enforces the mime_types allow-list", %{
+      text_file: text_file,
+      png_file: png_file
+    } do
+      assert %{type: :image, mime_type: "image/png"} =
+               Builders.from_file(png_file, mime_types: ["image/png", "image/jpeg"])
+
+      assert %{type: :text} = Builders.from_file(text_file, mime_types: ["text/plain"])
+
+      assert {:error, "File MIME type is not allowed"} =
+               Builders.from_file(png_file, mime_types: ["audio/wav"])
+
+      assert {:error, "File MIME type is not allowed"} =
+               Builders.from_file(png_file, mime_types: [])
+
+      assert {:error, "File MIME type is not allowed"} =
+               Builders.image_from_file(png_file, mime_types: ["image/jpeg"])
+
+      assert {:error, "File MIME type is not allowed"} =
+               Builders.audio_from_file(png_file, mime_types: ["audio/wav"])
+
+      # A malformed allow-list fails closed instead of allowing everything.
+      assert {:error, "Invalid file MIME types option"} =
+               Builders.from_file(png_file, mime_types: "image/png")
+
+      # Without the option every detected type is still accepted.
+      assert %{type: :image} = Builders.from_file(png_file, mime_types: nil)
+    end
+
     test "handles non-existent files" do
       result = Builders.from_file("/nonexistent/file.txt")
       assert {:error, _} = result
