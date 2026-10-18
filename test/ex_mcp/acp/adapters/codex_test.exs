@@ -1570,6 +1570,21 @@ defmodule ExMCP.ACP.Adapters.CodexTest do
       assert decode(data) == %{"id" => 101, "result" => %{"decision" => structured_decision}}
       assert new_state.pending_client_requests == %{}
     end
+
+    test "server request without params is rejected rather than treated as a notification",
+         %{state: state} do
+      line = Jason.encode!(%{"id" => 102, "method" => "item/experimental/requestReview"})
+
+      assert {:skip_and_write, data, _state} = Codex.translate_inbound(line, state)
+
+      assert decode(data) == %{
+               "id" => 102,
+               "error" => %{
+                 "code" => -32_601,
+                 "message" => "Unsupported app-server request: item/experimental/requestReview"
+               }
+             }
+    end
   end
 
   describe "elicitation and close parity" do
