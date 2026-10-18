@@ -164,7 +164,7 @@ defmodule ExMCP.ProtocolVersionTest do
       assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
     end
 
-    test "rejects a supported header that differs from the negotiated session version", %{
+    test "rejects a supported header outside the Streamable HTTP version family", %{
       opts: opts
     } do
       session_id = initialize_session(opts)
@@ -180,7 +180,7 @@ defmodule ExMCP.ProtocolVersionTest do
         conn(:post, "/", Jason.encode!(request))
         |> put_req_header("content-type", "application/json")
         |> put_req_header("mcp-session-id", session_id)
-        |> put_req_header("mcp-protocol-version", "2025-11-25")
+        |> put_req_header("mcp-protocol-version", "2024-11-05")
         |> HttpPlug.call(opts)
 
       assert conn.status == 400
@@ -188,6 +188,40 @@ defmodule ExMCP.ProtocolVersionTest do
       assert response["error"]["message"] =~ "does not match the negotiated version"
       assert response["error"]["data"]["expectedVersion"] == "2025-06-18"
       assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
+
+      assert {:ok, %{protocol_version: "2025-06-18"}} =
+               ExMCP.SessionManager.get_session(session_id)
+    end
+
+    test "accepts compatible Streamable HTTP headers without renegotiating the session", %{
+      opts: opts
+    } do
+      session_id = initialize_session(opts)
+
+      for {header, id} <- Enum.with_index(["2025-03-26", "2025-06-18", "2025-11-25"], 1) do
+        request = %{
+          "jsonrpc" => "2.0",
+          "method" => "test/echo",
+          "params" => %{"header" => header},
+          "id" => id
+        }
+
+        conn =
+          conn(:post, "/", Jason.encode!(request))
+          |> put_req_header("content-type", "application/json")
+          |> put_req_header("mcp-session-id", session_id)
+          |> put_req_header("mcp-protocol-version", header)
+          |> HttpPlug.call(opts)
+
+        assert conn.status == 200, conn.resp_body
+        assert Jason.decode!(conn.resp_body)["result"] == %{"header" => header}
+        # The negotiated session version stays authoritative.
+        assert get_resp_header(conn, "mcp-protocol-version") == ["2025-06-18"]
+        assert get_resp_header(conn, "mcp-session-id") == [session_id]
+
+        assert {:ok, %{protocol_version: "2025-06-18"}} =
+                 ExMCP.SessionManager.get_session(session_id)
+      end
     end
   end
 

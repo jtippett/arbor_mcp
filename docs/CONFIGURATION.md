@@ -116,10 +116,15 @@ use `protocol_mode` to enable modern negotiation. A per-client modern
 For legacy Streamable HTTP, `initialize` negotiates the version from
 `params.protocolVersion`; it does not require an `MCP-Protocol-Version` HTTP
 header. When `protocol_version_required: true`, every subsequent request must
-carry exactly one header matching the version stored for that server-issued
-session. ExMCP always rejects an explicit malformed, unsupported, duplicate, or
-session-mismatched header, even when missing-header enforcement is disabled.
-Modern requests always carry matching HTTP and `_meta` protocol versions.
+carry exactly one header compatible with the version stored for that
+server-issued session. Within the Streamable HTTP family (`2025-03-26`,
+`2025-06-18` and `2025-11-25`) any supported header is compatible with any
+negotiated version in that family; it does not renegotiate the session, and
+responses keep reporting the stored version. A `2024-11-05` session and the
+deprecated HTTP+SSE transport require an exact match. ExMCP always rejects an
+explicit malformed, unsupported, duplicate, or incompatible header, even when
+missing-header enforcement is disabled. Modern requests always carry matching
+HTTP and `_meta` protocol versions.
 
 The server issues a legacy Streamable HTTP session only for `initialize` and
 atomically allows one initialization attempt. It exposes the session ID only

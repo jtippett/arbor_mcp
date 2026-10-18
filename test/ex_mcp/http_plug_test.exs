@@ -395,7 +395,7 @@ defmodule ExMCP.HttpPlugTest do
       end
     end
 
-    test "requires the negotiated protocol version before standard DELETE" do
+    test "rejects missing, unsupported, non-family and duplicate headers before standard DELETE" do
       previous = Application.get_env(:ex_mcp, :protocol_version_required)
       Application.put_env(:ex_mcp, :protocol_version_required, true)
 
@@ -417,14 +417,16 @@ defmodule ExMCP.HttpPlugTest do
       assert missing.status == 400
       assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
 
-      mismatched =
-        conn(:delete, "/mcp")
-        |> put_req_header("mcp-session-id", session_id)
-        |> put_req_header("mcp-protocol-version", "2025-03-26")
-        |> HttpPlug.call(opts)
+      for version <- ["2099-01-01", "2024-11-05"] do
+        rejected =
+          conn(:delete, "/mcp")
+          |> put_req_header("mcp-session-id", session_id)
+          |> put_req_header("mcp-protocol-version", version)
+          |> HttpPlug.call(opts)
 
-      assert mismatched.status == 400
-      assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+        assert rejected.status == 400
+        assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
+      end
 
       duplicate_base =
         conn(:delete, "/mcp")
@@ -441,13 +443,15 @@ defmodule ExMCP.HttpPlugTest do
       assert HttpPlug.call(duplicated_version, opts).status == 400
       assert {:ok, %{status: :active}} = SessionManager.get_session(session_id)
 
+      # A compatible Streamable HTTP family header is accepted without renegotiation.
       valid =
         conn(:delete, "/mcp")
         |> put_req_header("mcp-session-id", session_id)
-        |> put_req_header("mcp-protocol-version", "2025-06-18")
+        |> put_req_header("mcp-protocol-version", "2025-03-26")
         |> HttpPlug.call(opts)
 
       assert valid.status == 204
+      assert get_resp_header(valid, "mcp-protocol-version") == ["2025-06-18"]
       assert {:ok, %{status: :terminated}} = SessionManager.get_session(session_id)
     end
   end
@@ -2087,6 +2091,75 @@ defmodule ExMCP.HttpPlugTest do
 
       assert failed.status == 404
       assert {:ok, %{status: :terminated}} = SessionManager.get_session(session_id)
+    end
+
+    test "deprecated HTTP+SSE POST keeps exact negotiated-header fencing" do
+      previous = Application.get_env(:ex_mcp, :protocol_version_required)
+      Application.put_env(:ex_mcp, :protocol_version_required, true)
+      session_id = SessionManager.create_session(%{transport: :sse})
+
+      on_exit(fn ->
+        if is_nil(previous),
+          do: Application.delete_env(:ex_mcp, :protocol_version_required),
+          else: Application.put_env(:ex_mcp, :protocol_version_required, previous)
+
+        SessionRegistry.unregister(session_id)
+        SessionManager.terminate_session(session_id)
+      end)
+
+      {:ok, handler} =
+        SSEHandler.start_link(%LegacyCaptureConn{}, session_id, %{
+          conn_module: LegacyCaptureConn,
+          session_manager: SessionManager,
+          initial_sse_event: {"endpoint", {:raw, "/message?sessionId=#{session_id}"}}
+        })
+
+      :ok = SessionRegistry.register(session_id, handler)
+      opts = HttpPlug.init(handler: TestServer, legacy_http_sse: true)
+
+      initialize = %{
+        "jsonrpc" => "2.0",
+        "method" => "initialize",
+        "params" => %{
+          "protocolVersion" => "2025-11-25",
+          "capabilities" => %{},
+          "clientInfo" => %{"name" => "legacy-client", "version" => "1.0.0"}
+        },
+        "id" => 79
+      }
+
+      initialized =
+        conn(:post, "/message?sessionId=#{session_id}", Jason.encode!(initialize))
+        |> put_req_header("content-type", "application/json")
+        |> HttpPlug.call(opts)
+
+      assert initialized.status == 202
+      assert {:ok, %{protocol_version: "2025-11-25"}} = SessionManager.get_session(session_id)
+      chunks_before = :sys.get_state(handler).conn.chunks
+
+      list_tools = %{"jsonrpc" => "2.0", "method" => "tools/list", "params" => %{}, "id" => 80}
+
+      rejected =
+        conn(:post, "/message?sessionId=#{session_id}", Jason.encode!(list_tools))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-protocol-version", "2025-03-26")
+        |> HttpPlug.call(opts)
+
+      assert rejected.status == 400
+      assert Jason.decode!(rejected.resp_body)["error"]["message"] =~ "does not match"
+      assert :sys.get_state(handler).conn.chunks == chunks_before
+      assert {:ok, %{protocol_version: "2025-11-25"}} = SessionManager.get_session(session_id)
+
+      accepted =
+        conn(:post, "/message?sessionId=#{session_id}", Jason.encode!(list_tools))
+        |> put_req_header("content-type", "application/json")
+        |> put_req_header("mcp-protocol-version", "2025-11-25")
+        |> HttpPlug.call(opts)
+
+      assert accepted.status == 202
+      assert List.last(:sys.get_state(handler).conn.chunks) =~ ~s("id":80)
+
+      SSEHandler.close(handler)
     end
 
     test "legacy POST rejects an unknown SSE session" do
