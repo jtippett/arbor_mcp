@@ -71,12 +71,17 @@ defmodule ExMCP.Server.ResultNormalizer do
   @doc """
   Applies the result envelope required by the request's protocol era.
 
-  Legacy results are returned unchanged. Modern results receive a
+  Legacy results are returned unchanged, except that a `tools/call` result
+  carrying the deprecated `structuredOutput` alias (for example from the
+  deprecated `ExMCP.Server.Tools` API) is emitted under the canonical
+  `structuredContent` wire field in both eras. Modern results receive a
   `resultType` discriminator and result metadata identifying the server.
   Handler-supplied `input_required` (or extension) result types are preserved.
   """
   @spec protocol_result(map(), map(), keyword()) :: map()
   def protocol_result(result, request_context, opts \\ []) when is_map(result) do
+    result = canonical_tool_result(result, request_context)
+
     if Map.get(request_context, :era) == :modern do
       result = result |> stringify_keys() |> normalize_tools_list(request_context)
       server_info = Keyword.get(opts, :server_info) || default_server_info()
@@ -104,6 +109,19 @@ defmodule ExMCP.Server.ResultNormalizer do
       result
     end
   end
+
+  # MCP names the structured tool result `structuredContent`. The deprecated
+  # Tools API (and some raw handlers) still produce the pre-release
+  # `structuredOutput` alias; rename it at the wire boundary so spec-compliant
+  # clients receive the canonical field. An explicit `structuredContent` wins.
+  defp canonical_tool_result(result, %{method: "tools/call"})
+       when is_map_key(result, :structuredOutput) or is_map_key(result, "structuredOutput") do
+    result = stringify_keys(result)
+    legacy = Map.fetch!(result, "structuredOutput")
+    result |> Map.delete("structuredOutput") |> Map.put_new("structuredContent", legacy)
+  end
+
+  defp canonical_tool_result(result, _request_context), do: result
 
   defp normalize_tools_list(%{"tools" => tools} = result, %{method: "tools/list"})
        when is_list(tools) do
