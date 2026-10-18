@@ -50,7 +50,7 @@ not reapplied as new backports.
 | ReliabilityWrapper closes the wrapped transport | arbor_mcp `939d139c` | Wrapper close only |
 | Circuit-breaker execution cutoff | arbor_mcp `7f91271f` | Cherry-picked |
 | DETS table names without atoms | arbor_mcp `20d04d9b` | Table names only; on-disk file names unchanged |
-| Pi edit snapshots contained to the workspace | arbor_acp#5 `54cb0d40` | Uses `ExMCP.Internal.WorkspacePath` |
+| Pi edit snapshots contained to the workspace | arbor_acp#5 `54cb0d40` | Uses the existing internal workspace path canonicalization |
 | AdapterBridge `session/list` error reply | arbor_acp `f0ba2663` | Bridge clause only |
 | Codex requests without `params` | arbor_acp `f0ba2663` | Classification only |
 | Codex handshake stops on `initialize` error | arbor_acp `f0ba2663` | No native-API field; golden renamed |
