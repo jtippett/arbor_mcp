@@ -56,6 +56,8 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
 
   require Logger
 
+  @component_stop_timeout 500
+
   defstruct [
     :wrapped_module,
     :wrapped_state,
@@ -197,17 +199,14 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
 
   @impl true
   def close(%__MODULE__{} = state) do
-    # Close reliability components first
-    if state.circuit_breaker_pid do
-      GenServer.stop(state.circuit_breaker_pid)
-    end
-
-    if state.health_check_pid do
-      GenServer.stop(state.health_check_pid)
-    end
-
-    # Then close wrapped transport
+    # The wrapped transport owns the real resource (a stdio child, an HTTP
+    # session), so it is closed first and unconditionally: a reliability
+    # component that has already died, or that will not stop, must not leave
+    # it running.
     state.wrapped_module.close(state.wrapped_state)
+  after
+    stop_component(state.circuit_breaker_pid)
+    stop_component(state.health_check_pid)
   end
 
   @impl true
@@ -301,6 +300,33 @@ defmodule ExMCP.Transport.ReliabilityWrapper do
   end
 
   # Private functions
+
+  # Stopping a component is best effort and bounded: one that is already gone
+  # needs nothing, and one that does not stop in time is killed. It is
+  # unlinked first so the kill does not reach the process that wrapped it.
+  defp stop_component(nil), do: :ok
+
+  defp stop_component(pid) do
+    GenServer.stop(pid, :normal, @component_stop_timeout)
+  catch
+    :exit, {:noproc, _call} -> :ok
+    :exit, _reason -> kill_component(pid)
+  end
+
+  defp kill_component(pid) do
+    monitor = Process.monitor(pid)
+    Process.unlink(pid)
+    Process.exit(pid, :kill)
+
+    receive do
+      {:DOWN, ^monitor, :process, ^pid, _reason} -> :ok
+    after
+      @component_stop_timeout ->
+        Process.demonitor(monitor, [:flush])
+        Logger.warning("Reliability component #{inspect(pid)} did not stop after a kill")
+        :ok
+    end
+  end
 
   defp execute_wrapped_operation(function, args, state) do
     case apply(state.wrapped_module, function, args) do

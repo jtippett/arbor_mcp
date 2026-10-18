@@ -1,6 +1,7 @@
 defmodule ExMCP.Protocol.MetaTest do
   use ExUnit.Case, async: true
 
+  alias ExMCP.Internal.RequestParams
   alias ExMCP.Protocol.Meta
 
   @version "2026-07-28"
@@ -104,6 +105,40 @@ defmodule ExMCP.Protocol.MetaTest do
 
       assert {:error, {:invalid_meta_field, "io.modelcontextprotocol/clientCapabilities"}} =
                Meta.build_request_meta(%{}, @version, [])
+    end
+
+    test "non-object metadata returns the typed error instead of raising" do
+      for meta <- [nil, "invalid", [], 5, true] do
+        assert {:error, {:invalid_meta, :not_an_object}} ==
+                 Meta.build_request_meta(meta, @version, %{})
+
+        assert {:error, {:invalid_meta, :not_an_object}} ==
+                 Meta.build_request_meta(meta, @version, %{}, log_level: :warning)
+      end
+    end
+
+    test "modern request preparation returns the typed error for non-object metadata" do
+      context = %{protocol_version: @version, client_capabilities: %{}}
+
+      assert {:error, {:invalid_meta, :not_an_object}} ==
+               RequestParams.for_request(%{"_meta" => "invalid"}, context)
+    end
+
+    test "an inherited log level is kept and an explicit one still wins" do
+      meta = %{"io.modelcontextprotocol/logLevel" => "debug"}
+
+      assert {:ok, %{"io.modelcontextprotocol/logLevel" => "debug"}} =
+               Meta.build_request_meta(meta, @version, %{})
+
+      assert {:ok, %{"io.modelcontextprotocol/logLevel" => "warning"}} =
+               Meta.build_request_meta(meta, @version, %{}, log_level: :warning)
+
+      assert {:error, {:invalid_meta_field, "io.modelcontextprotocol/logLevel"}} =
+               Meta.build_request_meta(
+                 %{"io.modelcontextprotocol/logLevel" => "wrong"},
+                 @version,
+                 %{}
+               )
     end
   end
 

@@ -320,12 +320,17 @@ defmodule ExMCP.ACP.Adapters.ClaudeSDKTest do
         {:ok, state} = ClaudeSDK.init(launch ++ opts)
         requested = if launch == [], do: [], else: ["docs"]
 
-        assert capture_log(fn ->
-                 ClaudeSDK.translate_outbound(
-                   session_request("session/new", tmp_dir, requested),
-                   state
-                 )
-               end) == ""
+        log =
+          capture_log(fn ->
+            ClaudeSDK.translate_outbound(
+              session_request("session/new", tmp_dir, requested),
+              state
+            )
+          end)
+
+        # capture_log/1 also collects concurrent async tests' log lines, so
+        # assert on this adapter's warning rather than on an empty capture.
+        refute log =~ "Claude SDK adapter:"
       end
     end
 

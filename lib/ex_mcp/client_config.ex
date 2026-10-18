@@ -881,7 +881,17 @@ defmodule ExMCP.ClientConfig do
     transport_headers = Map.to_list(transport.headers)
     merged_headers = existing_headers ++ transport_headers
 
-    opts
+    # Forward transport-specific constructor options (for example :server for
+    # BEAM, :args and :env for stdio), without replacing the profile's
+    # canonical timeouts/auth options.
+    transport_opts =
+      transport
+      |> Map.drop([:type, :url, :command, :host, :port, :headers, :options, :ssl, :path])
+      |> Map.to_list()
+      |> then(&Keyword.merge(transport.options, &1))
+
+    transport_opts
+    |> Keyword.merge(opts)
     |> Keyword.put(:transport_options, transport.options)
     |> Keyword.put(:headers, merged_headers)
   end

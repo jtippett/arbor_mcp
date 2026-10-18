@@ -1384,7 +1384,7 @@ defmodule ExMCP.HttpPlug do
     case Map.get(conn.query_params, "sessionId") do
       session_id when is_binary(session_id) ->
         case validate_session_id_value(session_id) do
-          :ok -> {:ok, conn, session_id}
+          :ok -> {:ok, put_private(conn, :ex_mcp_legacy_http_sse_session, session_id), session_id}
           {:error, :invalid_session_id} = error -> error
         end
 
@@ -2556,14 +2556,16 @@ defmodule ExMCP.HttpPlug do
               expected_version
             )
 
-          is_binary(session_id) and version != expected_version ->
+          is_binary(session_id) and
+              not compatible_legacy_http_header?(conn, version, expected_version) ->
             protocol_version_error(
               "MCP-Protocol-Version #{version} does not match the negotiated version #{expected_version}.",
               expected_version
             )
 
           true ->
-            {:ok, assign(conn, :request_protocol_version, version)}
+            request_version = if is_binary(session_id), do: expected_version, else: version
+            {:ok, assign(conn, :request_protocol_version, request_version)}
         end
 
       [] ->
@@ -2582,6 +2584,20 @@ defmodule ExMCP.HttpPlug do
           expected_version
         )
     end
+  end
+
+  # A supported header within the Streamable HTTP legacy family does not
+  # renegotiate the initialized session, so the stored version stays
+  # authoritative. The deprecated 2024-11-05 HTTP+SSE transport keeps its
+  # exact negotiated-header fence.
+  @streamable_http_legacy_family ["2025-03-26", "2025-06-18", "2025-11-25"]
+
+  defp compatible_legacy_http_header?(conn, version, expected) do
+    VersionRegistry.supported?(version) and
+      (version == expected or
+         (not Map.has_key?(conn.private, :ex_mcp_legacy_http_sse_session) and
+            version in @streamable_http_legacy_family and
+            expected in @streamable_http_legacy_family))
   end
 
   defp protocol_version_error(message, expected_version) do

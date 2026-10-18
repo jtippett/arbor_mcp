@@ -165,21 +165,25 @@ defmodule ExMCP.Server.DSL do
   def validate_tool_response(response, nil), do: {:ok, response}
 
   def validate_tool_response(response, output_schema) do
-    structured_content =
-      Map.get(response, :structuredContent) || Map.get(response, "structuredContent")
+    # Validate exactly the value that reaches the wire. Transports stringify
+    # result keys with ResultNormalizer.stringify_keys/1, so a present
+    # `structuredContent` (including `nil` or `false`) is always validated,
+    # and when both atom and string keys are present the emitted one is
+    # checked rather than whichever key happens to be truthy first.
+    normalized = ExMCP.Server.ResultNormalizer.stringify_keys(response)
 
-    if is_nil(structured_content) do
-      {:ok, response}
-    else
-      data = atom_keys_to_strings(structured_content)
+    case Map.fetch(normalized, "structuredContent") do
+      :error ->
+        {:ok, response}
 
-      case validate_with_schema(data, output_schema) do
-        :ok ->
-          {:ok, response}
+      {:ok, data} ->
+        case validate_with_schema(data, output_schema) do
+          :ok ->
+            {:ok, response}
 
-        {:error, errors} ->
-          {:error, "Output validation failed: #{format_validation_errors(errors)}"}
-      end
+          {:error, errors} ->
+            {:error, "Output validation failed: #{format_validation_errors(errors)}"}
+        end
     end
   end
 
@@ -938,16 +942,6 @@ defmodule ExMCP.Server.DSL do
       :ok
     end
   end
-
-  defp atom_keys_to_strings(map) when is_map(map) do
-    Map.new(map, fn
-      {key, value} when is_atom(key) -> {Atom.to_string(key), atom_keys_to_strings(value)}
-      {key, value} -> {key, atom_keys_to_strings(value)}
-    end)
-  end
-
-  defp atom_keys_to_strings(list) when is_list(list), do: Enum.map(list, &atom_keys_to_strings/1)
-  defp atom_keys_to_strings(value), do: value
 
   defp format_validation_errors(errors) when is_list(errors),
     do: Enum.map_join(errors, ", ", &inspect/1)

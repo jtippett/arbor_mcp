@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-18
+
 ### Changed
 
 - Bump `decimal` to 3.1.2, which fixes `EEF-CVE-2026-97853` (unbounded
@@ -17,9 +19,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **Security:** Pi ACP adapter edit snapshots read any file the agent named,
+  including absolute paths, `..` traversal and symlink escapes, with no size
+  limit, and sent the old and new contents to the ACP client as a diff.
+  Snapshots now cover only regular files of at most 1 MiB inside the session
+  workspace, and the post-edit read re-checks the path. Other edits still
+  produce the normal text result, without the diff block.
+- **Security:** `ExMCP.Server.DSL.Result.error/1` sent `inspect(reason)` to
+  clients for non-binary reasons, which could leak internal terms.
+  - A binary reason is still sent verbatim.
+  - An atom, or a binary `message` field, is reported as
+    `"Tool execution failed: <detail>"`.
+  - Any other term is logged and replaced with `"Tool execution failed"`.
+
+  **Behavior change:** clients no longer receive inspected Elixir terms in
+  tool error text.
 - Send the OAuth `resource` parameter exactly as published in protected
   resource metadata, including pathless identifiers that must not gain a
   trailing slash from URL normalization.
+- `ExMCP.Client` no longer crashes when it disconnects or loses its
+  transport while a `batch_request/3` is pending. Batch member entries
+  carried integer batch IDs that no teardown clause matched, which raised
+  `FunctionClauseError`. The batch now receives per-request connection
+  errors.
+- `ExMCP.Client` reverse-request tasks (sampling, elicitation, custom
+  server requests) and MRTR fulfillment tasks are stopped when their
+  connection ends. Waiting MRTR callers receive the connection error.
+  Previously a late result could answer an old server request ID on the
+  reconnected session, and MRTR callers were never answered.
+- The legacy HTTP+SSE transport now applies handshake, establishment and
+  caller deadlines to its POSTs instead of waiting for the full request
+  timeout.
+- `ExMCP.ClientConfig` forwards transport-specific options, such as BEAM
+  `:server` and stdio `:args` and `:env`, to the client. The profile's own
+  timeout and authentication options still take precedence.
+- `ExMCP.Protocol.Meta.build_request_meta/4` returns
+  `{:error, {:invalid_meta, :not_an_object}}` for non-object metadata
+  instead of raising `BadMapError`.
+- Streamable HTTP accepts a supported `MCP-Protocol-Version` header from the
+  `2025-03-26`, `2025-06-18` and `2025-11-25` family on a session negotiated
+  within that family. The negotiated version stays authoritative. Before,
+  any mismatch returned 400, which failed the official conformance scenario.
+  The deprecated 2024-11-05 HTTP+SSE transport still requires an exact
+  match.
+- `tools/call` results that carry the deprecated `structuredOutput` alias,
+  for example from `ExMCP.Server.Tools`, are now sent as the canonical
+  `structuredContent` field in both eras. An explicit `structuredContent`
+  wins. **Behavior change:** `ExMCP.Response` already reads both fields, but
+  callers that use `format: :map` and read `"structuredOutput"` from a
+  raw result should read `"structuredContent"`.
+- DSL `outputSchema` validation now checks the `structuredContent` value
+  the tool actually emits. Before, an explicit `nil` or `false` skipped
+  validation, and when both atom and string keys were present the atom key
+  was checked. **Behavior change:** a tool with an `outputSchema` that
+  returns `structuredContent: nil` now fails validation.
+- `ExMCP.Content.Builders.from_file/2` enforces its documented
+  `:mime_types` allow-list. A file whose detected type is not in the list
+  returns `{:error, "File MIME type is not allowed"}`, and an option value
+  that is not a list returns `{:error, "Invalid file MIME types option"}`.
+- `ExMCP.Transport.ReliabilityWrapper.close/1` closes the wrapped transport
+  even when its circuit breaker or health check has already died.
+  Previously the caught `:noproc` exit skipped the wrapped close, so a stdio
+  subprocess could leak across a reconnect. Stopping the components is now
+  bounded and best effort.
+- `ExMCP.Reliability.CircuitBreaker` treats results observed after the
+  operation's timeout as `:timeout` instead of returning a late result as
+  success.
+- The DETS session store no longer creates four atoms each time it opens.
+  Table names are references, and the on-disk file names are unchanged, so
+  existing stores reopen normally.
+- `ExMCP.ACP.AdapterBridge` answers a `session/list` request that the
+  adapter refuses with a three-element error (for example Codex with a
+  relative or unauthorized `cwd`) instead of crashing the bridge and its
+  connection.
+- Codex ACP adapter: server requests without `params` are treated as
+  requests and receive the `-32601` rejection, where before they were
+  treated as notifications and Codex waited for a reply.
+- Codex ACP adapter: an `initialize` error reply stops the handshake.
+  **Behavior change:** the adapter no longer sends `initialized` and
+  `model/list` to an app-server that rejected `initialize`.
 
 ## [1.6.0] - 2026-10-08
 

@@ -123,6 +123,11 @@ defmodule ExMCP.Content.Builders do
   @doc """
   Creates content from a file with automatic type detection.
 
+  `:max_size` (bytes, default 10 MB) and `:mime_types` constrain loading. When
+  `:mime_types` is given, the detected MIME type must be in that list or
+  `{:error, "File MIME type is not allowed"}` is returned; a value that is not
+  a list returns `{:error, "Invalid file MIME types option"}`.
+
   ## Examples
 
       # Image file
@@ -138,6 +143,7 @@ defmodule ExMCP.Content.Builders do
   def from_file(file_path, opts \\ []) do
     with {:ok, data} <- File.read(file_path),
          {:ok, mime_type} <- detect_mime_type(file_path, data),
+         :ok <- validate_file_mime(mime_type, opts),
          :ok <- validate_file_size(data, opts),
          {:ok, content} <- create_content_from_file(data, mime_type, file_path, opts) do
       content
@@ -549,6 +555,19 @@ defmodule ExMCP.Content.Builders do
     }
 
     Map.get(language_map, extension)
+  end
+
+  defp validate_file_mime(mime_type, opts) do
+    case Keyword.get(opts, :mime_types) do
+      nil ->
+        :ok
+
+      allowed when is_list(allowed) ->
+        if mime_type in allowed, do: :ok, else: {:error, "File MIME type is not allowed"}
+
+      _invalid ->
+        {:error, "Invalid file MIME types option"}
+    end
   end
 
   defp validate_file_size(data, opts) do

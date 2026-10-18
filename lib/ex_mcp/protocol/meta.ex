@@ -87,9 +87,10 @@ defmodule ExMCP.Protocol.Meta do
   def build_request_meta(meta, protocol_version, client_capabilities, opts \\ []) do
     client_info = Keyword.get(opts, :client_info)
     trace_context = Keyword.get(opts, :trace_context, %{})
-    log_level = Keyword.get(opts, :log_level, Map.get(meta, @log_level_key))
 
+    # The inherited log level is read only once `meta` is known to be a map.
     with :ok <- validate(meta),
+         log_level = Keyword.get(opts, :log_level, Map.get(meta, @log_level_key)),
          :ok <- validate_protocol_version(protocol_version),
          :ok <- validate_object(@client_capabilities_key, client_capabilities),
          :ok <- validate_optional_implementation(@client_info_key, client_info),

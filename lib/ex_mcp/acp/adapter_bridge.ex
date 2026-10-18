@@ -571,25 +571,7 @@ defmodule ExMCP.ACP.AdapterBridge do
 
       true ->
         # Let translate_outbound handle it (may send to native agent or skip)
-        case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
-          {:ok, :skip, new_adapter_state} ->
-            state = %{state | adapter_state: new_adapter_state}
-            state = synthesize_result(state, id, %{"sessions" => []})
-            {:reply, :ok, state}
-
-          {:ok, :pending, new_adapter_state} ->
-            {:reply, :ok, %{state | adapter_state: new_adapter_state}}
-
-          {:ok, data, new_adapter_state} ->
-            state = %{state | adapter_state: new_adapter_state}
-            _ = write_to_port(state, data)
-            {:reply, :ok, state}
-
-          {:reply, result, new_adapter_state} ->
-            state = %{state | adapter_state: new_adapter_state}
-            state = synthesize_result(state, id, result || %{"sessions" => []})
-            {:reply, :ok, state}
-        end
+        translate_session_list(msg, id, state)
     end
   end
 
@@ -857,6 +839,33 @@ defmodule ExMCP.ACP.AdapterBridge do
   end
 
   defp list_sessions_result(_result), do: %{"sessions" => []}
+
+  defp translate_session_list(msg, id, state) do
+    case state.adapter_mod.translate_outbound(msg, state.adapter_state) do
+      {:ok, :skip, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_result(state, id, %{"sessions" => []})
+        {:reply, :ok, state}
+
+      {:ok, :pending, new_adapter_state} ->
+        {:reply, :ok, %{state | adapter_state: new_adapter_state}}
+
+      {:ok, data, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        _ = write_to_port(state, data)
+        {:reply, :ok, state}
+
+      {:reply, result, new_adapter_state} ->
+        state = %{state | adapter_state: new_adapter_state}
+        state = synthesize_result(state, id, result || %{"sessions" => []})
+        {:reply, :ok, state}
+
+      # Codex refuses an unauthorized or relative cwd with a 3-tuple error;
+      # answer the request instead of crashing the bridge and the connection.
+      {:error, reason, new_adapter_state} ->
+        reply_translation_error(msg, reason, %{state | adapter_state: new_adapter_state})
+    end
+  end
 
   defp handle_translated_outbound({:ok, _delivery, state}, _msg), do: {:reply, :ok, state}
 

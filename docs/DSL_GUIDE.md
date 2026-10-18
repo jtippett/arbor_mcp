@@ -98,6 +98,11 @@ normalizes several plain return shapes from `run` / `read` / `render`:
 | `{:error, reason}` | tool/resource/prompt error shape |
 | `{:ok, result}` or `{:ok, result, state}` | both accepted |
 
+For tools, `{:error, reason}` and `ToolResult.error/1` send a binary reason to
+the client verbatim. An atom or an authored binary `message` field becomes
+`"Tool execution failed: <detail>"`; any other term is logged on the server and
+reported to the client only as `"Tool execution failed"`, never via `inspect/1`.
+
 ### Image, audio, and embedded resource results
 
 A `run` handler may return several content blocks. Build image, audio, and

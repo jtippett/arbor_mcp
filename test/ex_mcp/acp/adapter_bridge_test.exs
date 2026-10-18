@@ -404,6 +404,34 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
     def translate_inbound(_line, state), do: {:skip, state}
   end
 
+  # Mirrors the Codex adapter's session/list shape: it advertises the list
+  # capability without exporting list_sessions/2, so the bridge falls back to
+  # translate_outbound/2, which refuses an unauthorized cwd with a 3-tuple
+  # error.
+  defmodule ListAuthErrorAdapter do
+    @behaviour ExMCP.ACP.Adapter
+
+    defstruct []
+
+    @impl true
+    def init(_opts), do: {:ok, %__MODULE__{}}
+
+    @impl true
+    def command(_opts), do: {"cat", []}
+
+    @impl true
+    def capabilities, do: %{"sessionCapabilities" => %{"list" => %{}}}
+
+    @impl true
+    def translate_outbound(%{"method" => "session/list", "params" => %{"cwd" => "/etc"}}, state),
+      do: {:error, "Workspace path is not authorized", state}
+
+    def translate_outbound(_msg, state), do: {:ok, :skip, state}
+
+    @impl true
+    def translate_inbound(_line, state), do: {:skip, state}
+  end
+
   defmodule AuthForkAdapter do
     @behaviour ExMCP.ACP.Adapter
 
@@ -1024,6 +1052,37 @@ defmodule ExMCP.ACP.AdapterBridgeTest do
       assert session["title"] == "page-2"
       assert msg["result"]["nextCursor"] == "next-page"
       assert msg["result"]["_meta"] == %{}
+
+      AdapterBridge.close(bridge)
+    end
+
+    test "replies with an error and keeps the bridge alive when translation refuses the list" do
+      {:ok, bridge} = AdapterBridge.start_link(adapter: ListAuthErrorAdapter, adapter_opts: [])
+      _init = send_initialize(bridge)
+      ref = Process.monitor(bridge)
+
+      list_msg = %{
+        "jsonrpc" => "2.0",
+        "method" => "session/list",
+        "params" => %{"cwd" => "/etc"},
+        "id" => 52
+      }
+
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(list_msg))
+
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      msg = Jason.decode!(raw)
+      assert msg["id"] == 52
+      assert msg["error"]["code"] == -32603
+      assert msg["error"]["message"] == "Workspace path is not authorized"
+
+      # The same bridge still serves the next request.
+      allowed = %{list_msg | "params" => %{"cwd" => "/tmp/project"}, "id" => 53}
+      assert :ok = AdapterBridge.send_message(bridge, Jason.encode!(allowed))
+
+      {:ok, raw} = AdapterBridge.receive_message(bridge, 5_000)
+      assert %{"id" => 53, "result" => %{"sessions" => []}} = Jason.decode!(raw)
+      refute_received {:DOWN, ^ref, :process, ^bridge, _reason}
 
       AdapterBridge.close(bridge)
     end

@@ -4,6 +4,7 @@ defmodule ExMCP.Client.Deadline do
   # hold one. `nil` means "no deadline".
 
   alias ExMCP.Transport.{HTTP, ReliabilityWrapper}
+  alias ExMCP.Transport.HTTP.LegacySSE
 
   @type t :: integer() | nil
 
@@ -47,12 +48,16 @@ defmodule ExMCP.Client.Deadline do
 
   @doc """
   Caps the synchronous exchanges `transport_mod` makes with `transport_state`
-  at `deadline` (or removes the cap with nil). Only the HTTP transport sends
-  synchronously from the calling process; other transports are returned
-  unchanged and are bounded by their receive timeouts instead.
+  at `deadline` (or removes the cap with nil). Only the HTTP transports
+  (Streamable HTTP and the legacy HTTP+SSE POST) send synchronously from the
+  calling process; other transports are returned unchanged and are bounded by
+  their receive timeouts instead.
   """
   @spec put_on_transport(module() | nil, term(), t()) :: term()
   def put_on_transport(HTTP, %HTTP{} = state, deadline), do: HTTP.put_deadline(state, deadline)
+
+  def put_on_transport(LegacySSE, %LegacySSE{} = state, deadline),
+    do: %{state | deadline: deadline}
 
   def put_on_transport(ReliabilityWrapper, %ReliabilityWrapper{} = state, deadline) do
     %{
@@ -66,6 +71,8 @@ defmodule ExMCP.Client.Deadline do
   @doc "The deadline currently held by `transport_state`, if any."
   @spec on_transport(module() | nil, term()) :: t()
   def on_transport(HTTP, %HTTP{deadline: deadline}), do: deadline
+
+  def on_transport(LegacySSE, %LegacySSE{deadline: deadline}), do: deadline
 
   def on_transport(ReliabilityWrapper, %ReliabilityWrapper{} = state),
     do: on_transport(state.wrapped_module, state.wrapped_state)

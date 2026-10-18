@@ -37,6 +37,38 @@ defmodule ExMCP.Client.LegacyHttpSseTest do
     end
   end
 
+  defmodule HoldingPosts do
+    # Serves the legacy endpoint, except that the :hold_from-th POST and every
+    # later one are held without a reply until the listener shuts down.
+    def init(opts) do
+      {owner, opts} = Keyword.pop!(opts, :owner)
+      {posts, opts} = Keyword.pop!(opts, :posts)
+      {hold_from, opts} = Keyword.pop!(opts, :hold_from)
+      {owner, posts, hold_from, HttpPlug.init(opts)}
+    end
+
+    def call(%Plug.Conn{method: "POST"} = conn, {owner, posts, hold_from, plug_opts}) do
+      :ok = :counters.add(posts, 1, 1)
+
+      if :counters.get(posts, 1) >= hold_from do
+        send(owner, {:post_held, :counters.get(posts, 1)})
+        never = make_ref()
+
+        receive do
+          ^never -> conn
+        end
+      else
+        HttpPlug.call(conn, plug_opts)
+      end
+    end
+
+    def call(conn, {_owner, _posts, _hold_from, plug_opts}), do: HttpPlug.call(conn, plug_opts)
+  end
+
+  # Far below the transport's request timeout used with it, and loose enough
+  # for a loaded CI host.
+  @bound 4_000
+
   setup do
     port = free_port()
     ranch_ref = {:legacy_http_sse_test, System.unique_integer([:positive])}
@@ -174,6 +206,118 @@ defmodule ExMCP.Client.LegacyHttpSseTest do
 
     assert http_opts[:use_sse] == true
     assert http_opts[:url] == "http://127.0.0.1:4000/mcp"
+  end
+
+  describe "deadlines on the synchronous legacy POST" do
+    setup do
+      Process.flag(:trap_exit, true)
+      :ok
+    end
+
+    test "an initialize POST that never answers ends at :handshake_timeout" do
+      port = start_holding_server(hold_from: 1)
+
+      {elapsed, result} =
+        timed(fn ->
+          Client.start_link(
+            transport: :sse,
+            url: "http://127.0.0.1:#{port}",
+            handshake_timeout: 300,
+            request_timeout: 8_000,
+            health_check_interval: nil,
+            reconnect: false
+          )
+        end)
+
+      assert_received {:post_held, 1}
+      assert {:error, :handshake_timeout} = result
+      assert elapsed < @bound
+    end
+
+    test "an initialize POST that never answers ends at :establish_timeout" do
+      port = start_holding_server(hold_from: 1)
+
+      {elapsed, result} =
+        timed(fn ->
+          Client.start_link(
+            transport: :sse,
+            url: "http://127.0.0.1:#{port}",
+            handshake_timeout: 30_000,
+            establish_timeout: 400,
+            request_timeout: 8_000,
+            health_check_interval: nil,
+            reconnect: false
+          )
+        end)
+
+      assert_received {:post_held, 1}
+      assert {:error, :establish_timeout} = result
+      assert elapsed < @bound
+    end
+
+    test "a request POST that never answers frees the client at the caller's deadline" do
+      # POST 1 is initialize and POST 2 notifications/initialized.
+      port = start_holding_server(hold_from: 3)
+
+      {:ok, client} =
+        Client.start_link(
+          transport: :sse,
+          url: "http://127.0.0.1:#{port}",
+          request_timeout: 8_000,
+          health_check_interval: nil,
+          reconnect: false
+        )
+
+      {elapsed, result} =
+        timed(fn ->
+          request = Client.list_tools(client, timeout: 300)
+          # Answered only once the client is out of the held POST.
+          {request, Client.get_status(client, timeout: @bound)}
+        end)
+
+      assert_received {:post_held, 3}
+      assert {{:error, _reason}, {:ok, %{connection_status: :ready}}} = result
+      assert elapsed < @bound
+    end
+  end
+
+  defp start_holding_server(opts) do
+    port = free_port()
+    ranch_ref = {:legacy_http_sse_holding, System.unique_integer([:positive])}
+
+    {:ok, _pid} =
+      Plug.Cowboy.http(
+        HoldingPosts,
+        [
+          owner: self(),
+          posts: :counters.new(1, []),
+          hold_from: Keyword.fetch!(opts, :hold_from),
+          handler: Handler,
+          protocol_mode: :legacy_only,
+          legacy_http_sse: true,
+          sse_mode: :stream,
+          path: "/mcp"
+        ],
+        ip: {127, 0, 0, 1},
+        port: port,
+        ref: ranch_ref
+      )
+
+    on_exit(fn ->
+      try do
+        Plug.Cowboy.shutdown(ranch_ref)
+      catch
+        :exit, _reason -> :ok
+      end
+    end)
+
+    port
+  end
+
+  defp timed(fun) do
+    started = System.monotonic_time(:millisecond)
+    result = fun.()
+    {System.monotonic_time(:millisecond) - started, result}
   end
 
   defp free_port do

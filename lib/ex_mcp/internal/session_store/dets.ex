@@ -185,16 +185,17 @@ defmodule ExMCP.Internal.SessionStore.DETS do
   end
 
   # Unique names per open so a second process cannot alias the first
-  # table. File exclusivity is enforced by files_already_open?/1 and by
-  # DETS rejecting a second open of the same file.
+  # table. DETS accepts any term as a table name and does not store it in
+  # the file, so fresh references isolate each open without creating a
+  # permanent atom per open; the files keep their names. File exclusivity is
+  # enforced by files_already_open?/1 and by DETS rejecting a second open of
+  # the same file.
   defp table_names do
-    suffix = System.unique_integer([:positive])
-
     %{
-      sessions: :"ex_mcp_session_dets_#{suffix}_sessions",
-      events: :"ex_mcp_session_dets_#{suffix}_events",
-      request_ids: :"ex_mcp_session_dets_#{suffix}_request_ids",
-      meta: :"ex_mcp_session_dets_#{suffix}_meta"
+      sessions: make_ref(),
+      events: make_ref(),
+      request_ids: make_ref(),
+      meta: make_ref()
     }
   end
 
