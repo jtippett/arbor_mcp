@@ -24,8 +24,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   authenticated principal, tenant and endpoint; and for stdio and in-VM
   transports, the same server process. Rows belong to the request being
   dispatched, a cancellation for an unknown ID adds nothing, and the table
-  is swept and capped. **Behavior change:** an anonymous sessionless HTTP
-  request can no longer be cancelled from a different HTTP request.
+  is swept and capped.
+
+  **Behavior change:** on modern (2026-07-28) Streamable HTTP without
+  authentication, a `notifications/cancelled` sent in a separate POST no
+  longer cancels a request, because nothing ties the two POSTs to the same
+  client. That protocol revision cancels an HTTP request by closing its
+  response stream instead. ExMCP's client already does this, and it still
+  works, as do legacy-era HTTP sessions, authenticated modern requests,
+  stdio and in-VM transports. A third-party client that sends
+  `notifications/cancelled` over modern HTTP should close the request
+  stream instead, or the server should authenticate requests so they carry
+  a principal.
 
 ## [1.6.1] - 2026-10-18
 

@@ -67,9 +67,14 @@ any in-flight request with the same ID in the VM. Now it only reaches requests
 from its own HTTP session, authenticated principal, or server process, and the
 table that records cancellations is bounded. The fix was made on ArborMCP
 master first (`a3018ac`) and then ported. 1.x also covers the stdio, `:beam`
-and `:test` transports, which share the same table. The one **Behavior
-change** is that an anonymous sessionless HTTP request can no longer be
-cancelled from a different HTTP request.
+and `:test` transports, which share the same table.
+
+The one **Behavior change** affects modern (2026-07-28) Streamable HTTP
+without authentication. A `notifications/cancelled` sent in a separate POST
+no longer cancels a request. That revision cancels an HTTP request by closing
+its response stream, which ExMCP's client already does and which still works.
+Only third-party clients that send the notification over modern HTTP to an
+unauthenticated server are affected.
 
 ## Qualification and publication
 
