@@ -38,6 +38,7 @@ defmodule ExMCP.Transport.HTTP.LegacySSE do
 
   defstruct [
     :base_url,
+    :deadline,
     :sse_url,
     :post_url,
     :session_id,
@@ -54,6 +55,7 @@ defmodule ExMCP.Transport.HTTP.LegacySSE do
 
   @type t :: %__MODULE__{
           base_url: String.t(),
+          deadline: integer() | nil,
           sse_url: String.t(),
           post_url: String.t(),
           session_id: String.t(),
@@ -177,7 +179,8 @@ defmodule ExMCP.Transport.HTTP.LegacySSE do
         transport_opts: [],
         dns_timeout_ms: state.dns_timeout_ms,
         dns_resolver: state.dns_resolver,
-        allowed_private_hosts: state.allowed_private_hosts
+        allowed_private_hosts: state.allowed_private_hosts,
+        deadline: state.deadline
       )
 
     case result do
