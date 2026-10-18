@@ -2,6 +2,16 @@ defmodule ExMCP.Transport.ReliabilityWrapperTest do
   use ExUnit.Case, async: true
   alias ExMCP.Transport.{ReliabilityWrapper, Test}
 
+  # Reports its close to the owner, so a test can tell it ran.
+  defmodule RecordingTransport do
+    @moduledoc false
+
+    def close({owner, ref}) do
+      send(owner, {:wrapped_closed, ref})
+      :ok
+    end
+  end
+
   describe "wrap/3" do
     test "successfully wraps a transport with circuit breaker" do
       {:ok, transport_state} = Test.connect([])
@@ -250,6 +260,65 @@ defmodule ExMCP.Transport.ReliabilityWrapperTest do
       :timer.sleep(10)
 
       refute Process.alive?(cb_pid)
+      refute Process.alive?(hc_pid)
+    end
+
+    for component <- [:circuit_breaker_pid, :health_check_pid] do
+      @component component
+      test "closes the wrapped transport when the #{component} already died" do
+        ref = make_ref()
+
+        {:ok, wrapped_state} =
+          ReliabilityWrapper.wrap(RecordingTransport, {self(), ref},
+            circuit_breaker: [failure_threshold: 5],
+            health_check: [check_interval: 60_000]
+          )
+
+        dead = Map.fetch!(wrapped_state, @component)
+        # wrap/3 links the components to the caller; unlink so the kill
+        # does not take the test down with it.
+        Process.unlink(dead)
+        monitor = Process.monitor(dead)
+        Process.exit(dead, :kill)
+        assert_receive {:DOWN, ^monitor, :process, ^dead, :killed}
+
+        assert :ok = ReliabilityWrapper.close(wrapped_state)
+        assert_receive {:wrapped_closed, ^ref}
+        refute Process.alive?(wrapped_state.circuit_breaker_pid)
+        refute Process.alive?(wrapped_state.health_check_pid)
+      end
+    end
+
+    test "close is bounded when a component is stuck in a callback" do
+      ref = make_ref()
+      test_pid = self()
+
+      {:ok, wrapped_state} =
+        ReliabilityWrapper.wrap(RecordingTransport, {test_pid, ref},
+          health_check: [
+            check_interval: 60_000,
+            timeout: 5_000,
+            check_fn: fn _target ->
+              send(test_pid, {:checking, self()})
+
+              receive do
+                :never -> {:ok, %{}}
+              end
+            end
+          ]
+        )
+
+      hc_pid = wrapped_state.health_check_pid
+      # A check in progress holds the health check inside its callback.
+      spawn(fn -> ExMCP.Reliability.HealthCheck.check_now(hc_pid) end)
+      assert_receive {:checking, _check}
+
+      # Closed from the wrapping process, as the client does. Without a bound
+      # it would wait out the check's 5s timeout.
+      started = System.monotonic_time(:millisecond)
+      assert :ok = ReliabilityWrapper.close(wrapped_state)
+      assert System.monotonic_time(:millisecond) - started < 2_000
+      assert_receive {:wrapped_closed, ^ref}
       refute Process.alive?(hc_pid)
     end
   end
