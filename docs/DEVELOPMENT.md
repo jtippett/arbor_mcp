@@ -138,6 +138,8 @@ ExMCP uses a comprehensive set of code quality tools to ensure maintainable, rel
 - **Pre-commit**: Runs formatter, credo, and compile checks
 - **Pre-push**: Runs full test suite
 - **Setup**: Automatically configured with `make setup`
+- **Worktrees**: hooks run in the checkout being committed, including linked
+  `git worktree` checkouts, so fetch and compile dependencies there first
 - **Bypass**: Use `--no-verify` only in emergencies
 
 ## Testing Strategy
