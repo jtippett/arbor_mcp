@@ -1430,8 +1430,9 @@ defmodule ExMCP.Client do
         ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
         GenServer.reply(from, {:ok, ordered_responses})
 
-      {_id, batch_id} when is_binary(batch_id) ->
-        # This is a request that's part of a batch
+      {_id, batch_id} when is_binary(batch_id) or is_integer(batch_id) ->
+        # A batch member: it points at its batch's (integer) id, and the
+        # batch entry above answers for it.
         :ok
     end)
 
@@ -2164,8 +2165,9 @@ defmodule ExMCP.Client do
         ordered_responses = Enum.map(ordered_ids, &Map.get(all_responses, &1))
         GenServer.reply(from, {:ok, ordered_responses})
 
-      {_id, batch_id} when is_binary(batch_id) ->
-        # This is a request that's part of a batch
+      {_id, batch_id} when is_binary(batch_id) or is_integer(batch_id) ->
+        # A batch member: it points at its batch's (integer) id, and the
+        # batch entry above answers for it.
         :ok
     end)
   end
