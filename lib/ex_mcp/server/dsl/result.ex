@@ -20,6 +20,8 @@ defmodule ExMCP.Server.DSL.Result do
   * `{:ok, result}` / `{:ok, result, state}` / `{:error, reason}` tuples
   """
 
+  alias ExMCP.Server.ResultNormalizer
+
   @doc """
   Builds a text tool result.
   """
@@ -28,12 +30,19 @@ defmodule ExMCP.Server.DSL.Result do
 
   @doc """
   Builds an error tool result.
+
+  A binary reason is sent to the client verbatim. Other reasons never reach the
+  client through `inspect/1`: an atom or an authored binary `message` field
+  (`%{message: ...}` or `%{"message" => ...}`) is reported as
+  `"Tool execution failed: <detail>"`, and any other term is logged and
+  replaced by the fixed text `"Tool execution failed"`, so internal structs,
+  pids, or file paths cannot leak.
   """
   @spec error(any()) :: map()
   def error(reason) when is_binary(reason),
     do: %{content: [%{type: "text", text: reason}], isError: true}
 
-  def error(reason), do: reason |> inspect() |> error()
+  def error(reason), do: error(ResultNormalizer.error_message("Tool execution failed", reason))
 
   @doc """
   Builds a tool result with both text and structured content.

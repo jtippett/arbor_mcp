@@ -74,6 +74,20 @@ defmodule ExMCP.Server.DSLTest do
       end)
     end
 
+    tool "failing", "Returns an error reason" do
+      run(fn %{"reason" => kind}, state ->
+        reason =
+          case kind do
+            "binary" -> "authored failure"
+            "atom" -> :not_ready
+            "message" -> %{message: "authored detail", secret: "s3cr3t"}
+            "internal" -> {:db_error, self(), "/srv/app/secret.db"}
+          end
+
+        {:error, reason, state}
+      end)
+    end
+
     resource "config://app", "Application configuration" do
       title("App Config")
       mime_type("application/json")
@@ -187,6 +201,56 @@ defmodule ExMCP.Server.DSLTest do
              ModernServer.handle_call_tool("present_output", %{"case" => "valid"}, %{})
 
     assert valid == %{content: [], structuredContent: %{count: 3}}
+  end
+
+  describe "tool error results" do
+    import ExUnit.CaptureLog
+
+    test "never inspect internal error reasons into client text" do
+      expected = [
+        {"binary", "authored failure"},
+        {"atom", "Tool execution failed: not_ready"},
+        {"message", "Tool execution failed: authored detail"},
+        {"internal", "Tool execution failed"}
+      ]
+
+      for {kind, text} <- expected do
+        log =
+          capture_log(fn ->
+            assert {:ok, result, %{}} =
+                     ModernServer.handle_call_tool("failing", %{"reason" => kind}, %{})
+
+            assert result == %{content: [%{type: "text", text: text}], isError: true}
+            refute inspect(result) =~ "s3cr3t"
+            refute inspect(result) =~ "secret.db"
+            refute inspect(result) =~ "#PID"
+          end)
+
+        # Unsafe reasons stay available to operators in the server log.
+        if kind == "internal", do: assert(log =~ "secret.db")
+      end
+    end
+
+    test "ToolResult.error/1 keeps binaries and redacts other terms" do
+      alias ExMCP.Server.DSL.Result
+
+      assert Result.error("visible") == %{
+               content: [%{type: "text", text: "visible"}],
+               isError: true
+             }
+
+      assert Result.error(%{"message" => "string keyed"}).content == [
+               %{type: "text", text: "Tool execution failed: string keyed"}
+             ]
+
+      capture_log(fn ->
+        for reason <- [nil, true, %{token: "abc"}, [1, 2], {:error, :enoent}] do
+          assert Result.error(reason).content == [
+                   %{type: "text", text: "Tool execution failed"}
+                 ]
+        end
+      end)
+    end
   end
 
   test "unknown tool names are a JSON-RPC invalid-params protocol error" do
