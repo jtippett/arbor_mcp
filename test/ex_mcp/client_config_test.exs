@@ -461,6 +461,85 @@ defmodule ExMCP.ClientConfigTest do
       # URL should not be present for stdio transport
       refute Keyword.has_key?(opts, :url)
     end
+
+    test "forwards transport-specific options such as the BEAM :server" do
+      server = self()
+      opts = :beam |> ClientConfig.new(server: server) |> ClientConfig.to_client_opts()
+
+      assert Keyword.get(opts, :transport) == :beam
+      assert Keyword.get(opts, :server) == server
+    end
+
+    test "forwards stdio :args and :env" do
+      opts =
+        :stdio
+        |> ClientConfig.new(command: "server", args: ["--verbose"], env: [{"DEBUG", "1"}])
+        |> ClientConfig.to_client_opts()
+
+      assert Keyword.get(opts, :command) == "server"
+      assert Keyword.get(opts, :args) == ["--verbose"]
+      assert Keyword.get(opts, :env) == [{"DEBUG", "1"}]
+    end
+
+    test "forwards the transport :options as client options too" do
+      opts =
+        :http
+        |> ClientConfig.new(url: "http://localhost:8080", options: [use_sse: false])
+        |> ClientConfig.to_client_opts()
+
+      assert Keyword.get(opts, :use_sse) == false
+      assert Keyword.get(opts, :transport_options) == [use_sse: false]
+    end
+
+    test "transport options never replace the profile's timeouts" do
+      opts =
+        :http
+        |> ClientConfig.new(url: "http://localhost:8080", timeout: 1, options: [timeout: 2])
+        |> ClientConfig.to_client_opts()
+
+      assert Keyword.get_values(opts, :timeout) == [5_000]
+    end
+  end
+
+  describe "ExMCP.connect/2 with a ClientConfig" do
+    defmodule BeamHandler do
+      use ExMCP.Server.Handler
+
+      @impl true
+      def init(_args), do: {:ok, %{}}
+
+      @impl true
+      def handle_initialize(params, state) do
+        {:ok,
+         %{
+           "protocolVersion" => params["protocolVersion"],
+           "capabilities" => %{"tools" => %{}},
+           "serverInfo" => %{"name" => "client-config-beam", "version" => "1.0.0"}
+         }, state}
+      end
+
+      @impl true
+      def handle_list_tools(_cursor, state), do: {:ok, [], nil, state}
+    end
+
+    test "connects to the BEAM server given in put_transport/3" do
+      server =
+        start_supervised!(
+          {ExMCP.Server.HandlerServer, transport: :beam, handler: BeamHandler, handler_args: []}
+        )
+
+      config = ClientConfig.new() |> ClientConfig.put_transport(:beam, server: server)
+
+      assert {:ok, client} =
+               ExMCP.connect(config,
+                 protocol_mode: :legacy_only,
+                 health_check_interval: nil,
+                 reconnect: false
+               )
+
+      assert {:ok, %{connection_status: :ready}} = ExMCP.Client.get_status(client)
+      assert :ok = ExMCP.Client.stop(client)
+    end
   end
 
   describe "get_all_transports/1" do
