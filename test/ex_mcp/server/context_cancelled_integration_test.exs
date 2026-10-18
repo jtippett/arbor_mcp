@@ -4,6 +4,7 @@ defmodule ExMCP.Server.ContextCancelledIntegrationTest do
   import ExMCP.TestHelpers, only: [wait_until: 2]
 
   alias ExMCP.Client
+  alias ExMCP.Server.Cancellation
   alias ExMCP.Server.Context
   alias ExMCP.Server.Handler
   alias ExMCP.Server.HandlerServer
@@ -102,6 +103,36 @@ defmodule ExMCP.Server.ContextCancelledIntegrationTest do
 
     result = Task.await(task, 5_000)
     assert match?({:error, _}, result)
+
+    if Process.alive?(client), do: GenServer.stop(client)
+    if Process.alive?(server), do: GenServer.stop(server)
+  end
+
+  test "a cancellation for the same request id from another scope is not observed" do
+    {:ok, server} =
+      HandlerServer.start_link(
+        transport: :test,
+        handler: ObservingHandler,
+        handler_args: [test_pid: self()]
+      )
+
+    {:ok, client} = Client.start_link(transport: :test, server: server)
+
+    task = Task.async(fn -> Client.call_tool(client, "slow_import", %{}) end)
+
+    assert_receive {:handler_started, request_id}, 2_000
+    # The handler reports from inside the tracked dispatch, so its row exists.
+    server_scope = Cancellation.server_scope(server)
+
+    # An HTTP session, or another in-VM server, naming the same id.
+    :ok = Cancellation.cancel({:session, ExMCP.HttpPlug, "attacker"}, request_id)
+    :ok = Cancellation.cancel(Cancellation.server_scope(self()), request_id)
+    refute Cancellation.cancelled?(server_scope, request_id)
+
+    wait_until(fn -> request_id in Client.get_pending_requests(client) end, timeout: 5_000)
+    :ok = Client.send_cancelled(client, request_id, "User cancelled")
+    assert_receive {:observed_cancel, true}, 3_000
+    assert match?({:error, _}, Task.await(task, 5_000))
 
     if Process.alive?(client), do: GenServer.stop(client)
     if Process.alive?(server), do: GenServer.stop(server)

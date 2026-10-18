@@ -368,7 +368,8 @@ defmodule ExMCP.Server.StdioServer do
       principal_id: state.principal_id,
       tenant_id: state.tenant_id,
       replay_cache: state.replay_cache,
-      require_replay_protection: state.require_replay_protection
+      require_replay_protection: state.require_replay_protection,
+      cancellation_scope: Cancellation.server_scope(self())
     ]
 
     case Dispatch.dispatch(request, state.handler_module, state.handler_state, dispatch_opts) do
@@ -498,7 +499,7 @@ defmodule ExMCP.Server.StdioServer do
 
         if line != "" do
           # Mark cancel here so a blocked handle_call_tool can observe it.
-          Cancellation.mark_from_message(line)
+          Cancellation.cancel_from_message(Cancellation.server_scope(server_pid), line)
           send(server_pid, {:stdin_line, line})
         end
 

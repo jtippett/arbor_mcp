@@ -139,7 +139,11 @@ defmodule ExMCP.Transport.Local do
               role: transport.role
             })
 
-            Cancellation.mark_from_message(message)
+            Cancellation.cancel_from_message(
+              Cancellation.server_scope(transport.server_pid),
+              message
+            )
+
             Kernel.send(transport.server_pid, {:transport_message, message})
             {:ok, transport}
 

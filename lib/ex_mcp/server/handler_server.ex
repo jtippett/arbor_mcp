@@ -676,7 +676,7 @@ defmodule ExMCP.Server.HandlerServer do
 
     # Record the cancel out of band so a running handler can see it via
     # Context.cancelled?/0 even though this GenServer is otherwise busy.
-    Cancellation.mark_cancelled(request_id)
+    Cancellation.cancel(Cancellation.server_scope(self()), request_id)
 
     # Mark the request as cancelled and let the configured tracker propagate
     # it into the handler's own state.
@@ -892,7 +892,8 @@ defmodule ExMCP.Server.HandlerServer do
       principal_id: state.principal_id,
       tenant_id: state.tenant_id,
       replay_cache: state.replay_cache,
-      require_replay_protection: state.require_replay_protection
+      require_replay_protection: state.require_replay_protection,
+      cancellation_scope: Cancellation.server_scope(self())
     ]
 
     case Dispatch.dispatch(request, state.handler_module, state.handler_state, dispatch_opts) do
