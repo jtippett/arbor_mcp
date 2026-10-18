@@ -1401,6 +1401,7 @@ defmodule ExMCP.Client do
 
     # Reply to all pending requests with connection error
     connection_error = Error.connection_error("Client disconnected")
+    state = retire_callback_work(state, connection_error)
 
     state.pending_requests
     |> Enum.each(fn
@@ -2092,6 +2093,10 @@ defmodule ExMCP.Client do
 
   defp handle_transport_down(reason, state) do
     state = retire_links(state)
+
+    state =
+      retire_callback_work(state, Error.connection_error("Transport closed: #{inspect(reason)}"))
+
     reply_pending_with_close_error(reason, state)
     notify_subscription_processes(state, {:client_subscription_disconnected, reason})
 
@@ -2182,6 +2187,35 @@ defmodule ExMCP.Client do
     else
       connection_error
     end
+  end
+
+  # Reverse-request handler tasks (sampling, elicitation, custom server
+  # requests) and MRTR fulfillment tasks belong to the connection that started
+  # them. Once it has ended, a result would answer an old server request id on
+  # whatever connection replaced it, or let an MRTR caller retry its operation
+  # there. Stop them, answer each caller still waiting on MRTR fulfillment
+  # with `error` (unless nil), and forget them, so a result or DOWN already on
+  # its way is dropped as unknown.
+  defp retire_callback_work(state, error) do
+    stop_callback_work(state, error)
+    %{state | server_request_tasks: %{}, mrtr_tasks: %{}}
+  end
+
+  defp stop_callback_work(state, error) do
+    Enum.each(Map.get(state, :server_request_tasks) || %{}, fn {pid, {ref, _id, _kind}} ->
+      stop_callback_task(pid, ref)
+    end)
+
+    Enum.each(Map.get(state, :mrtr_tasks) || %{}, fn {pid, {ref, from, _scope_ref}} ->
+      stop_callback_task(pid, ref)
+      if error, do: GenServer.reply(from, {:error, error})
+    end)
+  end
+
+  # Handlers may trap exits, so only :kill is certain to stop them.
+  defp stop_callback_task(pid, ref) do
+    Process.demonitor(ref, [:flush])
+    Process.exit(pid, :kill)
   end
 
   defp notify_subscription_processes(state, message) do
@@ -2340,6 +2374,10 @@ defmodule ExMCP.Client do
 
   @impl true
   def terminate(reason, state) do
+    # Callers still waiting on the client exit with it, as for any other
+    # pending call; only the connection's callback tasks are stopped.
+    stop_callback_work(state, nil)
+
     state
     |> Map.get(:notification_listeners, %{})
     |> NotificationListener.close_all({:shutdown, reason})
