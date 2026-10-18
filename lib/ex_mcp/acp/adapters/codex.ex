@@ -885,7 +885,12 @@ defmodule ExMCP.ACP.Adapters.Codex do
     end
   end
 
-  defp handle_typed_response(:initialize, _entry, _reply, state) do
+  # An app-server that rejects the handshake must not be told `initialized` or
+  # asked for its model catalog as though it had accepted it.
+  defp handle_typed_response(:initialize, _entry, {:error, _error}, state),
+    do: {:skip, %{state | phase: :failed}}
+
+  defp handle_typed_response(:initialize, _entry, {:ok, _result}, state) do
     {id, state} = next_request_id(%{state | phase: :ready})
 
     request =

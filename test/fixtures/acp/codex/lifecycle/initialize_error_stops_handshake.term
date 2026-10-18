@@ -27,7 +27,7 @@
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
       kind: :note,
-      text: "the app-server rejects initialize; the adapter ignores the reply body"
+      text: "the app-server rejects initialize; the adapter records failure and stops the handshake"
     },
     result: %{}
   },
@@ -36,14 +36,7 @@
       kind: :inbound,
       message: %{"error" => %{"code" => -32600, "message" => "unsupported client"}, "id" => 1}
     },
-    result: %{
-      skipped: true,
-      tag: :skip_and_write,
-      writes: [
-        %{"method" => "initialized"},
-        %{"id" => 2, "method" => "model/list", "params" => %{"includeHidden" => false}}
-      ]
-    }
+    result: %{skipped: true, tag: :skip}
   },
   %ExMCP.Test.CodexGolden.Entry{
     step: %{
