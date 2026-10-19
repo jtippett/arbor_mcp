@@ -60,6 +60,22 @@ Left out of this patch:
 - JSON Schema 2020-12 dialect support. It needs a new dependency and changes how schemas validate, so it belongs in a minor release.
 - The ZCode `session/list` error path ([arbor_acp#7](https://github.com/trust-arbor/arbor_acp/issues/7)). It will be fixed on the ArborACP line first and then backported.
 
+## 1.6.2 security patch
+
+1.6.2 fixes GHSA-22m7-hr37-pxg3. A `notifications/cancelled` used to reach
+any in-flight request with the same ID in the VM. Now it only reaches requests
+from its own HTTP session, authenticated principal, or server process, and the
+table that records cancellations is bounded. The fix was made on ArborMCP
+master first (`a3018ac`) and then ported. 1.x also covers the stdio, `:beam`
+and `:test` transports, which share the same table.
+
+The one **Behavior change** affects modern (2026-07-28) Streamable HTTP
+without authentication. A `notifications/cancelled` sent in a separate POST
+no longer cancels a request. That revision cancels an HTTP request by closing
+its response stream, which ExMCP's client already does and which still works.
+Only third-party clients that send the notification over modern HTTP to an
+unauthenticated server are affected.
+
 ## Qualification and publication
 
 Run maintenance CI and adapter/protocol/security regressions on this source.

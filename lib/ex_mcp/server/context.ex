@@ -28,12 +28,17 @@ defmodule ExMCP.Server.Context do
   Returns `false` when there is no request context or the current id has
   not been cancelled. The server MAY stop work when this is true; ExMCP
   does not automatically abort the JSON-RPC request.
+
+  Callbacks dispatched by `ExMCP.MessageProcessor` only observe a
+  cancellation sent from the same HTTP session, or for a sessionless request
+  from the same authenticated principal, tenant and endpoint. Anonymous
+  sessionless requests cannot be cancelled this way.
   """
   @spec cancelled?() :: boolean()
   def cancelled? do
     case current() do
-      %RequestContext{request_id: request_id} when not is_nil(request_id) ->
-        Cancellation.cancelled?(request_id)
+      %RequestContext{request_id: request_id, cancellation_scope: scope} ->
+        Cancellation.cancelled?(scope, request_id)
 
       _other ->
         false
@@ -172,7 +177,6 @@ defmodule ExMCP.Server.Context do
       fun.()
     after
       restore(previous)
-      Cancellation.clear(context.request_id)
     end
   end
 

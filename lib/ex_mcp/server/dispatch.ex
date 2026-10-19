@@ -31,7 +31,7 @@ defmodule ExMCP.Server.Dispatch do
   alias ExMCP.Error
   alias ExMCP.Internal.{JSONRPC, MessageValidator}
   alias ExMCP.Protocol.{ErrorCodes, Initialize, Methods}
-  alias ExMCP.Server.{Context, Discover, MRTR, RequestContext, ResultNormalizer}
+  alias ExMCP.Server.{Cancellation, Context, Discover, MRTR, RequestContext, ResultNormalizer}
 
   @type handler_state :: term()
   @type result ::
@@ -84,6 +84,9 @@ defmodule ExMCP.Server.Dispatch do
                ),
              :ok <- RequestContext.validate_method(request_context),
              {:ok, request_context} <- MRTR.prepare_context(request_context, params, opts) do
+          scope = Keyword.get(opts, :cancellation_scope)
+          request_context = %{request_context | cancellation_scope: scope}
+
           ctx = %{
             method: method,
             id: Map.get(request, "id"),
@@ -94,9 +97,11 @@ defmodule ExMCP.Server.Dispatch do
             dispatch_opts: opts
           }
 
-          method
-          |> do_dispatch(ctx, state)
-          |> normalize_protocol_result(request_context, handler_module)
+          Cancellation.track(scope, cancellable_id(request_context), fn ->
+            method
+            |> do_dispatch(ctx, state)
+            |> normalize_protocol_result(request_context, handler_module)
+          end)
         else
           {:error, reason} ->
             context_error_result(request, reason, state, opts)
@@ -129,6 +134,10 @@ defmodule ExMCP.Server.Dispatch do
       {:notification, state}
     end
   end
+
+  # `initialize` must not be cancelled (MCP cancellation rules).
+  defp cancellable_id(%RequestContext{method: "initialize"}), do: nil
+  defp cancellable_id(%RequestContext{request_id: request_id}), do: request_id
 
   defp parameter_error_result(request, error, state) do
     if Map.has_key?(request, "id") do

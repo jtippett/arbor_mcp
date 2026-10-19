@@ -34,6 +34,7 @@ defmodule ExMCP.Server.RequestContext do
     :tenant_id,
     :endpoint,
     :notification_target,
+    :cancellation_scope,
     meta: %{},
     trace_context: %{}
   ]
@@ -58,6 +59,7 @@ defmodule ExMCP.Server.RequestContext do
           tenant_id: String.t() | nil,
           endpoint: String.t() | nil,
           notification_target: pid() | nil,
+          cancellation_scope: term(),
           meta: map(),
           trace_context: map()
         }
