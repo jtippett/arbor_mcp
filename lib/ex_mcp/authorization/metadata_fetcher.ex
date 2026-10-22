@@ -9,10 +9,14 @@ defmodule ExMCP.Authorization.MetadataFetcher do
   explicitly allow plain HTTP on loopback addresses. Requests carry fixed
   metadata headers and never inherit authorization, cookie, or application
   transport headers.
+
+  TLS peers are verified against the default trust store unless `:cacerts`, a
+  list of DER-encoded CA certificates, is given per call or in
+  `config :ex_mcp, :oauth_metadata_fetch`.
   """
 
   alias ExMCP.Authorization.MetadataHTTPClient
-  alias ExMCP.Internal.{DNSResolver, NetworkPolicy}
+  alias ExMCP.Internal.{CACerts, DNSResolver, NetworkPolicy}
 
   @redirect_statuses [301, 302, 303, 307, 308]
   @option_keys [
@@ -25,7 +29,8 @@ defmodule ExMCP.Authorization.MetadataFetcher do
     :allowed_redirect_origins,
     :allow_insecure_loopback,
     :dns_resolver,
-    :http_client
+    :http_client,
+    :cacerts
   ]
   @integer_options [
     :max_redirects,
@@ -312,9 +317,16 @@ defmodule ExMCP.Authorization.MetadataFetcher do
     with :ok <- validate_integer_options(opts),
          :ok <- validate_boolean(opts[:allow_insecure_loopback]),
          :ok <- validate_redirect_origins(opts[:allowed_redirect_origins]),
+         :ok <- validate_cacerts(opts[:cacerts]),
          :ok <- validate_callback(opts[:dns_resolver], :resolve, 2) do
       validate_callback(opts[:http_client], :get, 3)
     end
+  end
+
+  defp validate_cacerts(nil), do: :ok
+
+  defp validate_cacerts(cacerts) do
+    if CACerts.valid?(cacerts), do: :ok, else: metadata_error(:invalid_options)
   end
 
   defp validate_integer_options(opts) do

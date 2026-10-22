@@ -16,9 +16,12 @@ defmodule ExMCP.Content.SchemaPolicy do
   compressed responses and proxies, and bounds response bytes, aggregate bytes,
   document count, reference depth, redirects, DNS, connection, and request time.
   Fetched schemas are scoped to one compilation and are never globally cached.
+  TLS peers are verified against the default trust store unless
+  `network_refs: [cacerts: ...]` lists the DER-encoded CA certificates to trust.
   """
 
   alias ExMCP.Content.{SchemaDNS, SchemaHTTPClient, SchemaRemoteResolver}
+  alias ExMCP.Internal.CACerts
 
   @composition_keywords MapSet.new(~w(allOf anyOf oneOf not if then else))
   @literal_keywords MapSet.new(~w(const default enum examples))
@@ -48,6 +51,7 @@ defmodule ExMCP.Content.SchemaPolicy do
     request_timeout_ms: 3_000,
     proxy: :disabled,
     trust_partition: "application",
+    cacerts: nil,
     dns_resolver: SchemaDNS,
     http_client: SchemaHTTPClient
   ]
@@ -311,6 +315,7 @@ defmodule ExMCP.Content.SchemaPolicy do
          :ok <- require_allowed_host_when_enabled(network_opts),
          :ok <- validate_fixed_option(network_opts, :proxy, :disabled),
          :ok <- validate_trust_partition(network_opts[:trust_partition]),
+         :ok <- validate_cacerts(network_opts[:cacerts]),
          :ok <- validate_callback(network_opts, :dns_resolver, 2) do
       validate_callback(network_opts, :http_client, 3)
     end
@@ -353,6 +358,14 @@ defmodule ExMCP.Content.SchemaPolicy do
 
   defp validate_trust_partition(_partition),
     do: {:error, {:invalid_schema_policy_option, :trust_partition}}
+
+  defp validate_cacerts(nil), do: :ok
+
+  defp validate_cacerts(cacerts) do
+    if CACerts.valid?(cacerts),
+      do: :ok,
+      else: {:error, {:invalid_schema_policy_option, :cacerts}}
+  end
 
   defp validate_callback(opts, key, arity) do
     callback = opts[key]
