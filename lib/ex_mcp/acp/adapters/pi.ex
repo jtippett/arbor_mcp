@@ -397,11 +397,16 @@ defmodule ExMCP.ACP.Adapters.Pi do
       |> Keyword.put(:cwd, cwd)
       |> maybe_keyword_put(:session_path, session_file)
 
-    with {cmd, args} <- cli_command(opts),
-         {:ok, port} <- PortRunner.open(cmd, args, opts, __MODULE__) do
-      {:ok, %{state | port: port}}
-    else
-      {:error, reason} -> {:error, inspect(reason)}
+    # Match the error first: `{:error, reason}` is also a two-element tuple.
+    case cli_command(opts) do
+      {:error, reason} ->
+        {:error, inspect(reason)}
+
+      {cmd, args} ->
+        case PortRunner.open(cmd, args, opts, __MODULE__) do
+          {:ok, port} -> {:ok, %{state | port: port}}
+          {:error, reason} -> {:error, inspect(reason)}
+        end
     end
   end
 
