@@ -384,6 +384,18 @@ defmodule ExMCP.ACP.Adapters.PiTest do
              ]
     end
 
+    test "session/new reports a rejected session_path instead of starting Pi", %{
+      state: state,
+      tmp_dir: tmp_dir
+    } do
+      state = %{state | managed?: true, opts: Keyword.put(state.opts, :session_path, "-x")}
+      msg = %{"method" => "session/new", "id" => 13, "params" => %{"cwd" => tmp_dir}}
+
+      assert {:error, reason, %{port: nil}} = Pi.translate_outbound(msg, state)
+      assert reason =~ ":invalid_option"
+      assert reason =~ ":session_path"
+    end
+
     test "session/new maps empty model list to auth-required", %{state: state, tmp_dir: tmp_dir} do
       msg = %{"method" => "session/new", "id" => 12, "params" => %{"cwd" => tmp_dir}}
 
