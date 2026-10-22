@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Security:** the Claude and Pi ACP adapters passed option values to their
+  CLIs unvalidated, so a value starting with `-` became another flag. This is
+  the argument injection behind CVE-2026-96620, where a value such as
+  `--mcp-config …` could start an arbitrary command; it is exploitable when an
+  application passes untrusted input as an adapter option.
+  `ExMCP.ACP.Adapters.ClaudeSDK.Protocol.command/1` and
+  `ExMCP.ACP.Adapters.Pi.cli_command/1` now return
+  `{:error, {:invalid_option, key, reason}}` for such a value or one that is
+  not a string, checked in the exact form it would reach argv. Claude
+  `:resume` and `:session_id` must be session UUIDs.
+  `ExMCP.ACP.Registry.npx_command/1` validates the npm package specifier and
+  inserts `--` before it, returning `{:error, :invalid_npx_package}` otherwise.
+
 ## [1.7.0] - 2026-10-22
 
 ### Added
