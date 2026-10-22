@@ -92,11 +92,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
     settings = Settings.load(Keyword.get(opts, :cwd), opts)
     cli_path = Settings.pi_command(opts, settings)
 
-    args =
-      ["--mode", "rpc", "--no-themes"]
-      |> append_opt(opts, :session_path, "--session")
-
-    {cli_path, args}
+    with {:ok, args} <-
+           append_opt(["--mode", "rpc", "--no-themes"], opts, :session_path, "--session") do
+      {cli_path, args}
+    end
   end
 
   @impl true
@@ -398,10 +397,10 @@ defmodule ExMCP.ACP.Adapters.Pi do
       |> Keyword.put(:cwd, cwd)
       |> maybe_keyword_put(:session_path, session_file)
 
-    {cmd, args} = cli_command(opts)
-
-    case PortRunner.open(cmd, args, opts, __MODULE__) do
-      {:ok, port} -> {:ok, %{state | port: port}}
+    with {cmd, args} <- cli_command(opts),
+         {:ok, port} <- PortRunner.open(cmd, args, opts, __MODULE__) do
+      {:ok, %{state | port: port}}
+    else
       {:error, reason} -> {:error, inspect(reason)}
     end
   end
@@ -1772,8 +1771,17 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp append_opt(args, opts, key, flag) do
     case Keyword.get(opts, key) do
-      nil -> args
-      value -> args ++ [flag, to_string(value)]
+      nil ->
+        {:ok, args}
+
+      value ->
+        string = to_string(value)
+
+        if String.starts_with?(string, "-") do
+          {:error, {:invalid_option, key, "must not start with '-'"}}
+        else
+          {:ok, args ++ [flag, string]}
+        end
     end
   end
 

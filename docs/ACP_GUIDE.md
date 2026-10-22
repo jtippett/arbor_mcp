@@ -854,6 +854,8 @@ agent = ExMCP.ACP.Registry.get_agent(registry, "codex-acp")
 ```
 
 Use `ExMCP.ACP.Registry.find_agents/2` to search the decoded registry by agent id, name, or description.
+`npx_command/1` validates the npm package specifier and inserts `--` before it, so a registry
+entry cannot add `npx` options; an invalid specifier returns `{:error, :invalid_npx_package}`.
 
 ## Adapter CLI Interop Tests
 
