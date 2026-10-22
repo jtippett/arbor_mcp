@@ -50,6 +50,26 @@ Still left out of 1.x, as noted for 1.6:
   ([arbor_acp#7](https://github.com/trust-arbor/arbor_acp/issues/7)). It will
   be fixed on the ArborACP line first and then backported.
 
+## 1.7.1 security patch
+
+1.7.1 fixes GHSA-2q9v-qvwf-3m8w. The Claude and Pi ACP adapters appended
+option values to their CLI command lines without checking them, so a value
+starting with `-` became another flag. This is the argument injection reported
+upstream as CVE-2026-96620, where a value such as `--mcp-config ...` can start
+an arbitrary command. It is exploitable when an application passes untrusted
+input as an adapter startup option. Session IDs from ACP `session/load` and
+`session/resume` requests do not reach the command line.
+
+The **Behavior change**: `ClaudeSDK.Protocol.command/1` and
+`Pi.cli_command/1` return `{:error, {:invalid_option, key, reason}}` for a
+value starting with `-` or one that is not a string, and Claude `:resume` and
+`:session_id` must be session UUIDs. `ExMCP.ACP.Registry.npx_command/1`
+returns `{:error, :invalid_npx_package}` for an invalid package specifier.
+
+| Fix | Origin | 1.x commit |
+| --- | --- | --- |
+| Reject ACP adapter CLI options that would be parsed as flags | arbor_acp#8 (`dd14886`, `61fe5c5`) | `9546f68` (#100) |
+
 ## Qualification and publication
 
 Run maintenance CI and adapter/protocol/security regressions on this source.
