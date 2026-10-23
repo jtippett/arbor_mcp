@@ -266,7 +266,8 @@ defmodule ExMCP.Client do
 
   Modern HTTP response-stream recovery is deliberately separate from this
   generic policy because a broken response has ambiguous delivery semantics.
-  Operations accept these options:
+  It also covers a push transport's request-scoped failures (see
+  `c:ExMCP.Transport.subscribe/2`). Operations accept these options:
 
   - `:http_stream_retry` - `:at_least_once` (default) reissues one broken
     request stream with a new JSON-RPC id. `:safe_only` reissues only built-in
@@ -1641,7 +1642,7 @@ defmodule ExMCP.Client do
     if HTTP.stream_owner?(transport_state, request_id, stream_pid) do
       transport_state = HTTP.forget_stream(transport_state, request_id, stream_pid)
 
-      RequestHandler.handle_modern_stream_closed(
+      RequestHandler.handle_request_stream_error(
         request_id,
         reason,
         %{state | transport_state: transport_state}
@@ -1837,6 +1838,17 @@ defmodule ExMCP.Client do
     RequestHandler.parse_transport_message(message, state)
   end
 
+  # Push model: an event of one request's exchange. Only the current
+  # transport's processes are heard, so a late event from a connection the
+  # client has given up cannot touch its replacement.
+  def handle_info({:transport_request_event, source, request_id, event}, state) do
+    if source in ExMCP.Transport.linked_processes(state.transport_mod, state.transport_state) do
+      handle_transport_request_event(request_id, event, state)
+    else
+      {:noreply, state}
+    end
+  end
+
   # Push model: event ID tracking (for SSE resumability)
   def handle_info({:transport_event_id, _event_id}, state) do
     # Event IDs are tracked by the transport internally
@@ -2005,6 +2017,17 @@ defmodule ExMCP.Client do
       _ ->
         state
     end
+  end
+
+  defp handle_transport_request_event(request_id, {:message, message}, state),
+    do: RequestHandler.handle_request_stream_message(request_id, message, state)
+
+  defp handle_transport_request_event(request_id, {:error, reason}, state),
+    do: RequestHandler.handle_request_stream_error(request_id, reason, state)
+
+  defp handle_transport_request_event(_request_id, {:closed, reason}, state) do
+    Logger.error("Transport closed: #{inspect(reason)}")
+    {:noreply, handle_transport_down(reason, state)}
   end
 
   # A normal exit of a transport-owned process is the transport's own
@@ -3088,7 +3111,7 @@ defmodule ExMCP.Client do
 
   defp outcome_unknown(method, mode, attempts, error) do
     {:error,
-     Error.transport_error(:http, :outcome_unknown, %{
+     Error.transport_error(error.transport, :outcome_unknown, %{
        method: method,
        retry_mode: mode,
        attempts: attempts,

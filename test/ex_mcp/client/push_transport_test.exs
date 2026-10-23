@@ -1,13 +1,15 @@
 defmodule ExMCP.Client.PushTransportTest do
   @moduledoc """
-  The optional `ExMCP.Transport` callbacks a custom push transport uses to
-  follow the client's lifecycle: deadlines, the negotiated protocol version
-  and requests the client gives up on.
+  What a custom push transport can rely on: the optional `ExMCP.Transport`
+  callbacks that follow the client's lifecycle (deadlines, the negotiated
+  protocol version, requests the client gives up on), and request-scoped
+  `{:transport_request_event, source, request_id, event}` messages.
   """
 
   use ExUnit.Case, async: true
 
   alias ExMCP.Client
+  alias ExMCP.Error.TransportError
 
   @moduletag :capture_log
 
@@ -107,6 +109,34 @@ defmodule ExMCP.Client.PushTransportTest do
     end
   end
 
+  defmodule ClientHandler do
+    @behaviour ExMCP.Client.Handler
+
+    @impl true
+    def init(opts), do: {:ok, Keyword.fetch!(opts, :test_pid)}
+
+    @impl true
+    def handle_progress(request_id, params, test_pid) do
+      send(test_pid, {:client_progress, request_id, params})
+      {:ok, test_pid}
+    end
+
+    @impl true
+    def handle_log_message(request_id, params, test_pid) do
+      send(test_pid, {:client_log, request_id, params})
+      {:ok, test_pid}
+    end
+
+    @impl true
+    def handle_ping(state), do: {:ok, %{}, state}
+
+    @impl true
+    def handle_list_roots(state), do: {:ok, [], state}
+
+    @impl true
+    def handle_create_message(_params, state), do: {:error, "not supported", state}
+  end
+
   test "the transport adopts the negotiated version before notifications/initialized" do
     {_client, connection} = start_client()
 
@@ -159,6 +189,194 @@ defmodule ExMCP.Client.PushTransportTest do
     assert [] = Client.get_pending_requests(client)
   end
 
+  describe "request-scoped events" do
+    test "messages reach the request they belong to, and its response answers it" do
+      {client, connection} = start_client()
+
+      task =
+        Task.async(fn ->
+          Client.call_tool(client, "slow", %{},
+            progress_token: "slow-1",
+            timeout: 2_000,
+            format: :map
+          )
+        end)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => id}, _transport}
+
+      progress = %{"progressToken" => "slow-1", "progress" => 1, "total" => 2}
+
+      request_event(
+        client,
+        connection,
+        id,
+        {:message, notification("notifications/progress", progress)}
+      )
+
+      log = %{"level" => "info", "data" => "halfway"}
+
+      request_event(
+        client,
+        connection,
+        id,
+        {:message, notification("notifications/message", log)}
+      )
+
+      assert_receive {:client_progress, ^id, ^progress}, 1_000
+      assert_receive {:client_log, ^id, ^log}, 1_000
+
+      request_event(client, connection, id, {:message, result(id, %{"content" => []})})
+      assert {:ok, %{"content" => []}} = Task.await(task)
+    end
+
+    test "a server request on a request's exchange is answered, even without params" do
+      {client, connection} = start_client()
+
+      task =
+        Task.async(fn -> Client.call_tool(client, "slow", %{}, timeout: 2_000, format: :map) end)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => id}, _transport}
+
+      ping = %{"jsonrpc" => "2.0", "id" => "server-ping", "method" => "ping"}
+      request_event(client, connection, id, {:message, ping})
+
+      assert_receive {:sent, ^connection, %{"id" => "server-ping", "result" => %{}}, _transport},
+                     1_000
+
+      request_event(client, connection, id, {:message, result(id, %{"content" => []})})
+      assert {:ok, _result} = Task.await(task)
+    end
+
+    test "an ambiguous failure of a tool call is not reissued under safe_only" do
+      {client, connection} = start_client()
+
+      task =
+        Task.async(fn ->
+          Client.call_tool(client, "charge", %{},
+            timeout: 2_000,
+            http_stream_retry: :safe_only,
+            http_stream_retry_delay: 0,
+            format: :map
+          )
+        end)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => id}, _transport}
+      request_event(client, connection, id, {:error, :econnreset})
+
+      assert {:error,
+              %TransportError{
+                transport: Transport,
+                reason: :outcome_unknown,
+                details: %{
+                  attempts: 1,
+                  retry_mode: :safe_only,
+                  cause: %{cause: :econnreset, delivery: :ambiguous}
+                }
+              }} = Task.await(task)
+
+      refute_receive {:sent, ^connection, %{"method" => "tools/call"}, _transport}, 100
+    end
+
+    test "an ambiguous failure is reissued once, with a new id, under at_least_once" do
+      {client, connection} = start_client()
+
+      task =
+        Task.async(fn ->
+          Client.call_tool(client, "lookup", %{},
+            timeout: 2_000,
+            http_stream_retry_delay: 0,
+            format: :map
+          )
+        end)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => first}, _transport}
+      request_event(client, connection, first, {:error, :econnreset})
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => second},
+                      _transport},
+                     1_000
+
+      refute second == first
+      request_event(client, connection, second, {:message, result(second, %{"content" => []})})
+      assert {:ok, %{"content" => []}} = Task.await(task)
+    end
+
+    test "a failure that shows how the server answered fails the request, unreissued" do
+      {client, connection} = start_client()
+
+      task =
+        Task.async(fn ->
+          Client.call_tool(client, "charge", %{},
+            timeout: 2_000,
+            http_stream_retry_delay: 0,
+            format: :map
+          )
+        end)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => id}, _transport}
+      request_event(client, connection, id, {:error, {:http_error, 400}})
+
+      assert {:error,
+              %TransportError{
+                transport: Transport,
+                reason: :response_stream_invalid,
+                details: %{cause: {:http_error, 400}, delivery: :not_retryable}
+              } = error} = Task.await(task)
+
+      assert Client.delivery_outcome(error) == :unknown
+      refute_receive {:sent, ^connection, %{"method" => "tools/call"}, _transport}, 100
+      assert %{connection_status: :ready} = :sys.get_state(client)
+    end
+
+    test "a closed connection is closed, fails pending requests, and is replaced" do
+      {client, connection} =
+        start_client(reconnect: true, reconnect_backoff: [initial: 10, max: 10])
+
+      monitor = Process.monitor(connection)
+
+      task =
+        Task.async(fn -> Client.call_tool(client, "slow", %{}, timeout: 2_000, format: :map) end)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => id}, _transport}
+
+      request_event(client, connection, id, {:closed, :session_expired})
+
+      assert {:error, %ExMCP.Error{code: :connection_error}} = Task.await(task)
+      assert_receive {:closed, ^connection, _deadline}
+      assert_receive {:DOWN, ^monitor, :process, ^connection, _reason}
+
+      replacement = await_replacement(client, connection)
+      refute_received {:sent, ^replacement, %{"method" => "tools/call"}, _transport}
+    end
+
+    test "events from a replaced connection are ignored" do
+      {client, connection} =
+        start_client(reconnect: true, reconnect_backoff: [initial: 10, max: 10])
+
+      request_event(client, connection, nil, {:closed, :session_expired})
+      replacement = await_replacement(client, connection)
+
+      task =
+        Task.async(fn -> Client.call_tool(client, "echo", %{}, timeout: 2_000, format: :map) end)
+
+      assert_receive {:sent, ^replacement, %{"method" => "tools/call", "id" => id}, _transport}
+
+      stale = result(id, %{"content" => [%{"type" => "text", "text" => "stale"}]})
+      request_event(client, connection, id, {:message, stale})
+      request_event(client, connection, id, {:error, :econnreset})
+      request_event(client, connection, id, {:closed, :stale})
+
+      assert %{connection_status: :ready, transport_state: %Transport{connection: ^replacement}} =
+               :sys.get_state(client)
+
+      assert [^id] = Client.get_pending_requests(client)
+
+      request_event(client, replacement, id, {:message, result(id, %{"content" => []})})
+      assert {:ok, %{"content" => []}} = Task.await(task)
+      refute_received {:closed, ^replacement, _deadline}
+    end
+  end
+
   defp start_client(opts \\ []) do
     opts =
       Keyword.merge(
@@ -167,7 +385,8 @@ defmodule ExMCP.Client.PushTransportTest do
           test_pid: self(),
           protocol_mode: :legacy_only,
           health_check_interval: nil,
-          reconnect: false
+          reconnect: false,
+          handler: {ClientHandler, [test_pid: self()]}
         ],
         opts
       )
@@ -188,6 +407,23 @@ defmodule ExMCP.Client.PushTransportTest do
       0 -> :ok
     end
   end
+
+  defp await_replacement(client, connection) do
+    assert_receive {:connected, replacement}, 1_000
+    refute replacement == connection
+
+    # The reconnect completes in the client before it handles anything else.
+    assert %{connection_status: :ready, transport_state: %Transport{connection: ^replacement}} =
+             :sys.get_state(client)
+
+    replacement
+  end
+
+  defp request_event(client, source, request_id, event),
+    do: send(client, {:transport_request_event, source, request_id, event})
+
+  defp notification(method, params),
+    do: %{"jsonrpc" => "2.0", "method" => method, "params" => params}
 
   defp result(id, result), do: %{"jsonrpc" => "2.0", "id" => id, "result" => result}
 end

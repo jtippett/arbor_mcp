@@ -17,6 +17,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `notifications/initialized` is sent, and `cancel_request/2` a request the
   client gave up on when it timed out. A transport without them behaves as
   before.
+- Request-scoped push events: a transport that runs each request's exchange
+  separately can send `ExMCP.Client`
+  `{:transport_request_event, source, request_id, event}`, where `event` is
+  `{:message, message}`, `{:error, reason}` or `{:closed, reason}`. Messages
+  reach the request's progress and log callbacks and its response; an error
+  fails the request and is classified, and reissued under
+  `:http_stream_retry`, like a broken modern HTTP response stream; a closure
+  is handled as the connection going down. Events from a `source` that is not
+  one of the current transport's `linked_processes/1` are dropped, so a
+  replaced connection cannot disturb its successor.
 
 ### Fixed
 

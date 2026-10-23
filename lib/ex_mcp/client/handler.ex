@@ -288,7 +288,8 @@ defmodule ExMCP.Client.Handler do
 
   @doc """
   Handles a progress notification delivered on an ordinary request's modern
-  streamable-HTTP response.
+  streamable-HTTP response, or in a push transport's request-scoped event
+  (see `c:ExMCP.Transport.subscribe/2`).
 
   The first argument is the JSON-RPC id of the request that owns the stream.
   The map contains `"progressToken"`, `"progress"`, and optional `"total"`
@@ -301,7 +302,8 @@ defmodule ExMCP.Client.Handler do
 
   @doc """
   Handles a request-scoped `notifications/message` event delivered before the
-  final response on a modern streamable-HTTP request. The first argument is
+  final response on a modern streamable-HTTP request, or in a push
+  transport's request-scoped event. The first argument is
   the owning JSON-RPC request id, which is required to correlate concurrent
   log streams because log notification params do not contain a progress token.
   """

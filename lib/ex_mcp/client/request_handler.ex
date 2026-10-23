@@ -561,7 +561,9 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   @doc false
-  def handle_modern_stream_closed(request_id, reason, state) do
+  # The response to `request_id` is not coming: its exchange (a modern HTTP
+  # response stream, or a push transport's request) failed with `reason`.
+  def handle_request_stream_error(request_id, reason, state) do
     case Map.get(state.subscriptions || %{}, request_id) do
       subscription_pid when is_pid(subscription_pid) ->
         handle_subscription_stream_closed(request_id, reason, state)
@@ -569,7 +571,7 @@ defmodule ExMCP.Client.RequestHandler do
       _other ->
         case Map.get(state.pending_requests, request_id) do
           {from, :single, _method} ->
-            error = request_stream_error(reason)
+            error = request_stream_error(reason, state)
 
             GenServer.reply(from, {:error, error})
 
@@ -577,7 +579,7 @@ defmodule ExMCP.Client.RequestHandler do
              %{state | pending_requests: Map.delete(state.pending_requests, request_id)}}
 
           {from, :single} ->
-            error = request_stream_error(reason)
+            error = request_stream_error(reason, state)
 
             GenServer.reply(from, {:error, error})
 
@@ -611,16 +613,24 @@ defmodule ExMCP.Client.RequestHandler do
     end
   end
 
-  defp request_stream_error(reason) do
+  # A reason that shows how the server answered (an error status, a
+  # malformed or unfinished response) is :response_stream_invalid, which is
+  # never reissued. Any other broke the exchange when the request may have
+  # reached the server: ExMCP.Client reissues :response_stream_broken once
+  # under http_stream_retry: :at_least_once, and under :safe_only only when
+  # the operation is safe to repeat.
+  defp request_stream_error(reason, state) do
+    transport = transport_name(state.transport_mod)
+
     if ambiguous_stream_break?(reason) do
       %Error.TransportError{
-        transport: :http,
+        transport: transport,
         reason: :response_stream_broken,
         details: %{cause: reason, delivery: :ambiguous}
       }
     else
       %Error.TransportError{
-        transport: :http,
+        transport: transport,
         reason: :response_stream_invalid,
         details: %{cause: reason, delivery: :not_retryable}
       }

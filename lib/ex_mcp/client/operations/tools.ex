@@ -55,7 +55,8 @@ defmodule ExMCP.Client.Operations.Tools do
     clients receive events through `c:ExMCP.Client.Handler.handle_progress/3`
   - `:meta` - Additional `_meta` entries; merged with `:progress_token`
   - `:http_stream_retry` - `:at_least_once` (default) retries one ambiguous
-    modern HTTP response-stream break; `:safe_only` returns
+    response-stream break (modern HTTP, or a push transport's request-scoped
+    failure); `:safe_only` returns
     `:outcome_unknown` for tools unless `:retry_safe` is explicitly `true`
   - `:retry_safe` - Caller attestation that reissuing this operation is safe.
     Tool `readOnlyHint` is intentionally not treated as a security boundary.

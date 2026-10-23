@@ -46,6 +46,10 @@ defmodule ExMCP.Transport do
   Transports that implement `subscribe/2` should still implement `receive_message/1`
   for backwards compatibility.
 
+  A push transport that runs each request's exchange separately (each HTTP
+  POST in its own process, say) can also report events of one request; see
+  `subscribe/2`.
+
   ## Custom Transport Implementation
 
   To implement a custom transport, create a module that implements
@@ -152,6 +156,40 @@ defmodule ExMCP.Transport do
 
   This enables the push (event-driven) model, eliminating the need for a
   receiver task that polls `receive_message/1`.
+
+  ## Request-scoped events
+
+  A transport that knows which request an event belongs to can send
+  `ExMCP.Client` `{:transport_request_event, source, request_id, event}`
+  instead. `source` is the transport process the event comes from: the
+  client drops an event whose `source` is not among the current
+  `linked_processes/1`, so a late event from a connection it has replaced is
+  harmless. `event` is one of:
+
+  - `{:message, message}` - a decoded JSON-RPC message (a map) that arrived
+    on the request's exchange: its response, or a server message sent before
+    it. `notifications/progress` and `notifications/message` go to the
+    client handler's `c:ExMCP.Client.Handler.handle_progress/3` and
+    `c:ExMCP.Client.Handler.handle_log_message/3` with `request_id`; any
+    other message is handled as if pushed with `{:transport_event, message}`.
+  - `{:error, reason}` - the exchange failed and no response is coming. The
+    pending request fails with an `ExMCP.Error.TransportError` whose
+    `details.cause` is `reason`. A reason that shows how the server
+    answered, an HTTP error status (`{:http_error, status}`) or a malformed
+    or unfinished response (`:invalid_stream_message`, `:invalid_sse_json`,
+    `:response_id_mismatch`, `:final_response_required`), gives
+    `reason: :response_stream_invalid`, and the request is not reissued.
+    Any other reason means the request may have reached the server, and
+    gives `reason: :response_stream_broken` with
+    `details.delivery: :ambiguous`. The client then reissues the request
+    once under the default `http_stream_retry: :at_least_once`; under
+    `http_stream_retry: :safe_only` it reissues only an operation that is
+    safe to repeat, and fails any other with `reason: :outcome_unknown`
+    (see `ExMCP.Client`).
+  - `{:closed, reason}` - the connection is gone, as with
+    `{:transport_closed, reason}`: the client closes the transport, fails
+    every pending request with a connection error and reconnects if it is
+    configured to.
 
   Returns `{:ok, new_state}` on success.
   """
