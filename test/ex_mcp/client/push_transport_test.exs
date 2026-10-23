@@ -22,7 +22,7 @@ defmodule ExMCP.Client.PushTransportTest do
 
     @behaviour ExMCP.Transport
 
-    defstruct [:connection, :test_pid, :handshake, deadline: nil, version: nil]
+    defstruct [:connection, :test_pid, :handshake, :handshake_error, deadline: nil, version: nil]
 
     @impl true
     def connect(opts) do
@@ -36,7 +36,13 @@ defmodule ExMCP.Client.PushTransportTest do
         end)
 
       send(test_pid, {:connected, connection})
-      {:ok, %__MODULE__{connection: connection, test_pid: test_pid}}
+
+      {:ok,
+       %__MODULE__{
+         connection: connection,
+         test_pid: test_pid,
+         handshake_error: Keyword.get(opts, :handshake_error)
+       }}
     end
 
     @impl true
@@ -59,6 +65,9 @@ defmodule ExMCP.Client.PushTransportTest do
 
     # Only the handshake is pulled; everything after it is pushed.
     @impl true
+    def receive_message(%__MODULE__{handshake_error: reason}) when reason != nil,
+      do: {:error, reason}
+
     def receive_message(%__MODULE__{handshake: nil}), do: {:error, :closed}
     def receive_message(state), do: {:ok, state.handshake, %{state | handshake: nil}}
 
@@ -135,6 +144,25 @@ defmodule ExMCP.Client.PushTransportTest do
 
     @impl true
     def handle_create_message(_params, state), do: {:error, "not supported", state}
+  end
+
+  test "a handshake the transport saw refused fails start_link with the reason intact" do
+    Process.flag(:trap_exit, true)
+
+    challenge =
+      ~s(Bearer resource_metadata="https://auth.example/.well-known/oauth-protected-resource")
+
+    refusal = {:http_error, 401, %{www_authenticate: [challenge]}}
+
+    assert {:error, {:transport_connect_failed, ^refusal}} =
+             Client.start_link(
+               transport: Transport,
+               test_pid: self(),
+               handshake_error: refusal,
+               protocol_mode: :legacy_only,
+               health_check_interval: nil,
+               reconnect: false
+             )
   end
 
   test "the transport adopts the negotiated version before notifications/initialized" do

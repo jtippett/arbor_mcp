@@ -800,8 +800,10 @@ defmodule ExMCP.Client.ConnectionManager do
       {:error, {:timeout_error, _reason}} ->
         {:error, :handshake_timeout}
 
+      # Kept as a term, so a caller can tell a refused login (an HTTP 401 and
+      # its challenge) from a dead server.
       {:error, reason} ->
-        {:error, "Failed to receive handshake response: #{inspect(reason)}"}
+        {:error, {:transport_error, reason}}
     end
   end
 

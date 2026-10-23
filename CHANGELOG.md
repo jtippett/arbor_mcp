@@ -33,6 +33,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A transport's error receiving the `initialize` response reached
+  `start_link/1` as a string (`"Failed to receive handshake response: …"`),
+  so a caller could not tell a refused login from a dead server. It is now
+  `{:transport_connect_failed, reason}` with the transport's own reason.
 - A JSON-RPC request or notification that omits `params`, which JSON-RPC 2.0
   makes optional, was rejected as an invalid message, so `ExMCP.Client`
   ignored it: a server's `ping` sent without `params` went unanswered. It is
