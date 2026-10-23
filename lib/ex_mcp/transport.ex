@@ -91,6 +91,8 @@ defmodule ExMCP.Transport do
       end
   """
 
+  alias ExMCP.Internal.RevisionCatalog
+
   @type state :: any()
   @type message :: String.t() | map() | list()
   @type opts :: keyword()
@@ -261,13 +263,24 @@ defmodule ExMCP.Transport do
   @callback deadline(state()) :: integer() | nil
 
   @doc """
-  Optional: adopts the protocol version the server selected in the
-  `initialize` handshake.
+  Optional: adopts the protocol version the connection settled on, which
+  also tells the transport the protocol era: `modern_version?/1` is true for
+  a modern (2026-07-28) version and false for a legacy one.
 
-  ExMCP calls it as soon as the `initialize` result arrives, before it sends
-  `notifications/initialized`, so a transport that carries the version on
-  every message it sends (Streamable HTTP's `MCP-Protocol-Version` header)
-  sends the negotiated one from that notification on.
+  ExMCP calls it once per connection, before `subscribe/2`:
+
+  - **Legacy era** (`initialize`): as soon as the `initialize` result
+    arrives, before it sends `notifications/initialized`, so a transport
+    that carries the version on every message it sends (Streamable HTTP's
+    `MCP-Protocol-Version` header) sends the negotiated one from that
+    notification on.
+  - **Modern era** (`server/discover`): once the probe has settled the
+    connection modern, before any request is sent. The probe itself goes out
+    before this call; its body carries the version it offers (see
+    `ExMCP.Transport.HTTP.RequestHeaders.for_body/3`).
+
+  A failed attempt in one era that falls back to the other does not call
+  it, so a transport is never told a version it then has to unlearn.
   """
   @callback set_protocol_version(state(), version :: String.t()) :: state()
 
@@ -293,6 +306,24 @@ defmodule ExMCP.Transport do
                       deadline: 1,
                       set_protocol_version: 2,
                       cancel_request: 2
+
+  @doc """
+  Whether `version` is a modern-era MCP revision (2026-07-28), reached
+  through the `server/discover` probe rather than `initialize`.
+
+  A custom transport reads the era from the version it is given in
+  `c:set_protocol_version/2`: a modern Streamable HTTP connection opens no
+  session or standalone `GET` stream and cancels a request by closing its
+  response stream.
+
+      iex> ExMCP.Transport.modern_version?("2026-07-28")
+      true
+
+      iex> ExMCP.Transport.modern_version?("2025-11-25")
+      false
+  """
+  @spec modern_version?(String.t() | nil) :: boolean()
+  def modern_version?(version), do: RevisionCatalog.era_for(version) == :modern
 
   @doc """
   Check if a transport module supports the push (subscribe) model.

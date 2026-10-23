@@ -37,6 +37,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `ExMCP.Transport.HTTP.ToolHeaders.cache/1` of the listed tools, the
   `Mcp-Param-*` headers; in the legacy era `Mcp-Session-Id` and
   `Last-Event-ID` when given.
+- A custom transport learns the modern era too: when the `server/discover`
+  probe settles the connection modern, `set_protocol_version/2` is called
+  with the modern version before `subscribe/2`, as it is with the legacy
+  version during `initialize`. `ExMCP.Transport.modern_version?/1` tells the
+  two apart.
 
 ### Fixed
 

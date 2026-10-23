@@ -418,6 +418,16 @@ defmodule ExMCP.Client.ConnectionManager do
     end
   end
 
+  # A custom transport learns a legacy version mid-handshake (see
+  # adopt_negotiated_version/3), so only a modern one is handed over here:
+  # either way it is told exactly once, before subscribe/2.
+  defp settle_transport_era(transport_mod, transport_state, %{"protocolVersion" => version}) do
+    if VersionRegistry.modern?(version) and
+         function_exported?(transport_mod, :set_protocol_version, 2),
+       do: transport_mod.set_protocol_version(transport_state, version),
+       else: transport_state
+  end
+
   defp settle_transport_era(_transport_mod, transport_state, _result), do: transport_state
 
   defp adopt_negotiated_version(transport_mod, transport_state, %{"protocolVersion" => version})

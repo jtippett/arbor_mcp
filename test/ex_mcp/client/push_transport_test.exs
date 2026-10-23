@@ -2,8 +2,10 @@ defmodule ExMCP.Client.PushTransportTest do
   @moduledoc """
   What a custom push transport can rely on: the optional `ExMCP.Transport`
   callbacks that follow the client's lifecycle (deadlines, the negotiated
-  protocol version, requests the client gives up on), and request-scoped
-  `{:transport_request_event, source, request_id, event}` messages.
+  protocol version, requests the client gives up on), request-scoped
+  `{:transport_request_event, source, request_id, event}` messages, and the
+  modern era (the `server/discover` probe, its refusals, cancellation by
+  closing a request, and the request headers).
   """
 
   use ExUnit.Case, async: true
@@ -15,6 +17,7 @@ defmodule ExMCP.Client.PushTransportTest do
 
   @moduletag :capture_log
 
+  doctest ExMCP.Transport, only: [modern_version?: 1]
   doctest ExMCP.Transport.HTTP.RequestHeaders
 
   defmodule Transport do
@@ -22,11 +25,27 @@ defmodule ExMCP.Client.PushTransportTest do
     A push transport driven by the test process. Its connection is a process
     linked to the client; every message sent is reported to the test, which
     answers by sending the client transport events in the connection's name.
+
+    The establishing exchanges are pulled. `initialize` is answered with a
+    result, a JSON-RPC `:initialize_error`, or a `:handshake_error` from the
+    transport; `server/discover` as `:discover` says: `:modern` answers it,
+    `{:reject, status, error}` rejects it with an HTTP status and a
+    JSON-RPC error body in a detail map, `{:refuse, reason}` fails it with
+    `reason`.
     """
 
     @behaviour ExMCP.Transport
 
-    defstruct [:connection, :test_pid, :handshake, :handshake_error, deadline: nil, version: nil]
+    defstruct [
+      :connection,
+      :test_pid,
+      :handshake_error,
+      :initialize_error,
+      :discover,
+      pull: nil,
+      deadline: nil,
+      version: nil
+    ]
 
     @impl true
     def connect(opts) do
@@ -45,7 +64,9 @@ defmodule ExMCP.Client.PushTransportTest do
        %__MODULE__{
          connection: connection,
          test_pid: test_pid,
-         handshake_error: Keyword.get(opts, :handshake_error)
+         handshake_error: Keyword.get(opts, :handshake_error),
+         initialize_error: Keyword.get(opts, :initialize_error),
+         discover: Keyword.get(opts, :discover)
        }}
     end
 
@@ -60,23 +81,29 @@ defmodule ExMCP.Client.PushTransportTest do
 
       case message do
         %{"method" => "initialize", "id" => id} ->
-          {:ok, %{state | handshake: initialize_response(id)}}
+          {:ok, %{state | pull: initialize_reply(state, id)}}
+
+        %{"method" => "server/discover", "id" => id} ->
+          {:ok, %{state | pull: discover_reply(state.discover, id)}}
 
         _other ->
           {:ok, state}
       end
     end
 
-    # Only the handshake is pulled; everything after it is pushed.
+    # Only the establishing exchanges are pulled; everything after is pushed.
     @impl true
-    def receive_message(%__MODULE__{handshake_error: reason}) when reason != nil,
-      do: {:error, reason}
+    def receive_message(%__MODULE__{pull: {:ok, response}} = state),
+      do: {:ok, response, %{state | pull: nil}}
 
-    def receive_message(%__MODULE__{handshake: nil}), do: {:error, :closed}
-    def receive_message(state), do: {:ok, state.handshake, %{state | handshake: nil}}
+    def receive_message(%__MODULE__{pull: {:error, reason}}), do: {:error, reason}
+    def receive_message(_state), do: {:error, :closed}
 
     @impl true
-    def subscribe(_client, state), do: {:ok, state}
+    def subscribe(_client, state) do
+      send(state.test_pid, {:subscribed, state.connection, state.version})
+      {:ok, state}
+    end
 
     @impl true
     def close(state) do
@@ -101,7 +128,10 @@ defmodule ExMCP.Client.PushTransportTest do
     end
 
     @impl true
-    def set_protocol_version(state, version), do: %{state | version: version}
+    def set_protocol_version(state, version) do
+      send(state.test_pid, {:version_set, state.connection, version})
+      %{state | version: version}
+    end
 
     @impl true
     def cancel_request(state, request_id) do
@@ -109,17 +139,48 @@ defmodule ExMCP.Client.PushTransportTest do
       state
     end
 
-    defp initialize_response(id) do
-      Jason.encode!(%{
-        "jsonrpc" => "2.0",
-        "id" => id,
-        "result" => %{
-          "protocolVersion" => "2025-06-18",
-          "capabilities" => %{"tools" => %{}},
-          "serverInfo" => %{"name" => "push-transport", "version" => "1"}
-        }
-      })
+    defp initialize_reply(%__MODULE__{handshake_error: reason}, _id) when reason != nil,
+      do: {:error, reason}
+
+    defp initialize_reply(%__MODULE__{initialize_error: error}, id) when error != nil,
+      do: {:ok, json_rpc_error(id, error)}
+
+    defp initialize_reply(_state, id) do
+      {:ok,
+       Jason.encode!(%{
+         "jsonrpc" => "2.0",
+         "id" => id,
+         "result" => %{
+           "protocolVersion" => "2025-06-18",
+           "capabilities" => %{"tools" => %{}},
+           "serverInfo" => %{"name" => "push-transport", "version" => "1"}
+         }
+       })}
     end
+
+    defp discover_reply(:modern, id) do
+      result = %{
+        "resultType" => "complete",
+        "supportedVersions" => ["2026-07-28"],
+        "capabilities" => %{"tools" => %{}},
+        "ttlMs" => 60_000,
+        "cacheScope" => "private",
+        "_meta" => %{
+          "io.modelcontextprotocol/serverInfo" => %{"name" => "push-transport", "version" => "1"}
+        }
+      }
+
+      {:ok, Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "result" => result})}
+    end
+
+    defp discover_reply({:reject, status, error}, id),
+      do:
+        {:error, {:http_error, status, %{body: json_rpc_error(id, error), www_authenticate: []}}}
+
+    defp discover_reply({:refuse, reason}, _id), do: {:error, reason}
+
+    defp json_rpc_error(id, error),
+      do: Jason.encode!(%{"jsonrpc" => "2.0", "id" => id, "error" => error})
   end
 
   defmodule ClientHandler do
@@ -176,6 +237,10 @@ defmodule ExMCP.Client.PushTransportTest do
 
     assert_receive {:sent, ^connection, %{"method" => "notifications/initialized"},
                     %{version: "2025-06-18"}}
+
+    assert_receive {:subscribed, ^connection, "2025-06-18"}
+    assert_received {:version_set, ^connection, "2025-06-18"}
+    refute_received {:version_set, ^connection, _version}
   end
 
   test "a request with a timeout is sent under its deadline, cleared once it is sent" do
@@ -434,6 +499,47 @@ defmodule ExMCP.Client.PushTransportTest do
     end
   end
 
+  describe "the modern era" do
+    test "a discovered server settles modern without initialize, the version set before subscribe" do
+      {client, connection} = start_client(protocol_mode: :prefer_modern, discover: :modern)
+
+      assert_receive {:sent, ^connection,
+                      %{
+                        "method" => "server/discover",
+                        "id" => _id,
+                        "params" => %{
+                          "_meta" => %{"io.modelcontextprotocol/protocolVersion" => "2026-07-28"}
+                        }
+                      }, %{version: nil}}
+
+      assert_receive {:subscribed, ^connection, "2026-07-28"}
+      assert_received {:version_set, ^connection, "2026-07-28"}
+      refute_received {:version_set, ^connection, _version}
+      refute_received {:sent, ^connection, %{"method" => "initialize"}, _transport}
+      refute_received {:sent, ^connection, %{"method" => "notifications/initialized"}, _transport}
+      assert {:ok, "2026-07-28"} = Client.negotiated_version(client)
+    end
+
+    for status <- [400, 404] do
+      test "a probe rejected with HTTP #{status} and a JSON-RPC body falls back to initialize" do
+        method_not_found = %{"code" => -32601, "message" => "Method not found"}
+
+        {client, connection} =
+          start_client(
+            protocol_mode: :prefer_modern,
+            discover: {:reject, unquote(status), method_not_found}
+          )
+
+        assert_receive {:sent, ^connection, %{"method" => "server/discover"}, _transport}
+        assert_receive {:sent, ^connection, %{"method" => "initialize"}, %{version: nil}}
+        assert_receive {:subscribed, ^connection, "2025-06-18"}
+        assert_received {:version_set, ^connection, "2025-06-18"}
+        refute_received {:version_set, ^connection, _version}
+        assert {:ok, "2025-06-18"} = Client.negotiated_version(client)
+      end
+    end
+  end
+
   describe "request headers for a custom transport" do
     test "a modern tools/call mirrors method, name and declared parameters, with no session" do
       tool_headers =
@@ -492,25 +598,29 @@ defmodule ExMCP.Client.PushTransportTest do
   end
 
   defp start_client(opts \\ []) do
-    opts =
-      Keyword.merge(
-        [
-          transport: Transport,
-          test_pid: self(),
-          protocol_mode: :legacy_only,
-          health_check_interval: nil,
-          reconnect: false,
-          handler: {ClientHandler, [test_pid: self()]}
-        ],
-        opts
-      )
-
-    {:ok, client} = Client.start_link(opts)
+    opts = Keyword.merge([protocol_mode: :legacy_only], opts)
+    {:ok, client} = Client.start_link(client_opts(opts))
     Process.unlink(client)
     on_exit(fn -> if Process.alive?(client), do: Process.exit(client, :kill) end)
 
     assert_receive {:connected, connection}
     {client, connection}
+  end
+
+  # Options for a client of the test transport, in the default protocol mode
+  # (:prefer_modern) unless `opts` say otherwise.
+  defp client_opts(opts) do
+    Keyword.merge(
+      [
+        transport: Transport,
+        test_pid: self(),
+        protocol_mode: :prefer_modern,
+        health_check_interval: nil,
+        reconnect: false,
+        handler: {ClientHandler, [test_pid: self()]}
+      ],
+      opts
+    )
   end
 
   defp modern_request(method, params) do
