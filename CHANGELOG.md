@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A JSON-RPC request or notification that omits `params`, which JSON-RPC 2.0
+  makes optional, was rejected as an invalid message, so `ExMCP.Client`
+  ignored it: a server's `ping` sent without `params` went unanswered. It is
+  now parsed with empty `params`.
+
 ## [1.7.1] - 2026-10-22
 
 ### Fixed

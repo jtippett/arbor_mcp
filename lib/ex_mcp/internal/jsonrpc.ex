@@ -74,17 +74,13 @@ defmodule ExMCP.Internal.JSONRPC do
     end
   end
 
-  def parse_unvalidated(%{
-        "jsonrpc" => @jsonrpc,
-        "method" => method,
-        "params" => params,
-        "id" => id
-      }) do
-    {:request, method, params, id}
+  # `params` is optional in JSON-RPC 2.0: a server's `ping` may omit it.
+  def parse_unvalidated(%{"jsonrpc" => @jsonrpc, "method" => method, "id" => id} = message) do
+    {:request, method, Map.get(message, "params", %{}), id}
   end
 
-  def parse_unvalidated(%{"jsonrpc" => @jsonrpc, "method" => method, "params" => params}) do
-    {:notification, method, params}
+  def parse_unvalidated(%{"jsonrpc" => @jsonrpc, "method" => method} = message) do
+    {:notification, method, Map.get(message, "params", %{})}
   end
 
   def parse_unvalidated(%{"jsonrpc" => @jsonrpc, "result" => result, "id" => id}) do

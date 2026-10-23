@@ -46,4 +46,15 @@ defmodule ExMCP.Internal.JSONRPCTest do
 
     assert JSONRPC.parse_unvalidated(%{"method" => "ping"}) == {:error, :invalid_message}
   end
+
+  test "parses requests and notifications that omit the optional params" do
+    assert JSONRPC.parse_unvalidated(~s({"jsonrpc":"2.0","method":"ping","id":"srv-1"})) ==
+             {:request, "ping", %{}, "srv-1"}
+
+    assert JSONRPC.parse_unvalidated(%{"jsonrpc" => "2.0", "method" => "ping", "id" => 7}) ==
+             {:request, "ping", %{}, 7}
+
+    assert JSONRPC.parse_unvalidated(~s({"jsonrpc":"2.0","method":"notifications/initialized"})) ==
+             {:notification, "notifications/initialized", %{}}
+  end
 end
