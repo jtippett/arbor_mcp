@@ -45,6 +45,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- An HTTP 400, 404 or 405 to the probe whose body came in a detail map,
+  `{:http_error, status, %{body: body, …}}`, was not read: a JSON-RPC
+  error in it was ignored, so an unsupported-version error (`-32022` with
+  `data.supported` and `data.requested`) fell back to legacy `initialize`
+  instead of failing. The body is now read as when it is given alone.
 - A transport's error receiving the `initialize` response reached
   `start_link/1` as a string (`"Failed to receive handshake response: …"`),
   so a caller could not tell a refused login from a dead server. It is now

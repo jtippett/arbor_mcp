@@ -538,6 +538,22 @@ defmodule ExMCP.Client.PushTransportTest do
         assert {:ok, "2025-06-18"} = Client.negotiated_version(client)
       end
     end
+
+    test "an unsupported-version error in the rejection's body is not fallback evidence" do
+      Process.flag(:trap_exit, true)
+
+      unsupported = %{
+        "code" => -32022,
+        "message" => "Unsupported protocol version",
+        "data" => %{"supported" => ["2025-11-25"], "requested" => "2026-07-28"}
+      }
+
+      assert {:error, _reason} =
+               Client.start_link(client_opts(discover: {:reject, 400, unsupported}))
+
+      assert_receive {:sent, _connection, %{"method" => "server/discover"}, _transport}
+      refute_receive {:sent, _connection, %{"method" => "initialize"}, _transport}, 100
+    end
   end
 
   describe "request headers for a custom transport" do
