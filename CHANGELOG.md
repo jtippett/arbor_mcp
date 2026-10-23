@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   definite, never reissued, whether reported as `{:http_error, status}` or
   with what came with it as `{:http_error, status, detail}` (a body, an
   authentication challenge), which reaches the caller as the error's `cause`.
+- `ExMCP.Transport.HTTP.RequestHeaders.for_body/3` gives a custom transport
+  that POSTs MCP messages itself the headers ExMCP's HTTP transport would
+  send with a body: `MCP-Protocol-Version`, and in the modern era
+  `Mcp-Method`, `Mcp-Name` (Base64-sentinel encoded when unsafe) and, given
+  `ExMCP.Transport.HTTP.ToolHeaders.cache/1` of the listed tools, the
+  `Mcp-Param-*` headers; in the legacy era `Mcp-Session-Id` and
+  `Last-Event-ID` when given.
 
 ### Fixed
 

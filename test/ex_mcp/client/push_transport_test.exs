@@ -10,8 +10,12 @@ defmodule ExMCP.Client.PushTransportTest do
 
   alias ExMCP.Client
   alias ExMCP.Error.TransportError
+  alias ExMCP.Internal.Headers
+  alias ExMCP.Transport.HTTP.RequestHeaders
 
   @moduletag :capture_log
+
+  doctest ExMCP.Transport.HTTP.RequestHeaders
 
   defmodule Transport do
     @moduledoc """
@@ -430,6 +434,63 @@ defmodule ExMCP.Client.PushTransportTest do
     end
   end
 
+  describe "request headers for a custom transport" do
+    test "a modern tools/call mirrors method, name and declared parameters, with no session" do
+      tool_headers =
+        ExMCP.Transport.HTTP.ToolHeaders.cache([
+          %{
+            "name" => "météo",
+            "inputSchema" => %{
+              "type" => "object",
+              "properties" => %{"region" => %{"type" => "string", "x-mcp-header" => "Region"}}
+            }
+          }
+        ])
+
+      body =
+        modern_request("tools/call", %{"name" => "météo", "arguments" => %{"region" => "eu"}})
+
+      headers =
+        RequestHeaders.for_body(body, "2026-07-28",
+          session_id: "stale-session",
+          tool_headers: tool_headers
+        )
+
+      assert Headers.get(headers, "mcp-protocol-version") == "2026-07-28"
+      assert Headers.get(headers, "mcp-method") == "tools/call"
+      assert Headers.get(headers, "mcp-name") == RequestHeaders.encode_value("météo")
+      assert "=?base64?" <> _encoded = Headers.get(headers, "mcp-name")
+      assert Headers.get(headers, "mcp-param-region") == "eu"
+      refute Headers.get(headers, "mcp-session-id")
+      refute Headers.get(headers, "content-type")
+      refute Headers.get(headers, "accept")
+    end
+
+    test "the probe is a modern request" do
+      body = modern_request("server/discover", %{})
+
+      assert Enum.sort(RequestHeaders.for_body(body, "2025-06-18")) == [
+               {"MCP-Protocol-Version", "2026-07-28"},
+               {"Mcp-Method", "server/discover"}
+             ]
+    end
+
+    test "a legacy request carries the given version and session, and no modern headers" do
+      body =
+        Jason.encode!(%{
+          "jsonrpc" => "2.0",
+          "id" => 1,
+          "method" => "tools/call",
+          "params" => %{"name" => "weather", "arguments" => %{}}
+        })
+
+      assert Enum.sort(RequestHeaders.for_body(body, "2025-06-18", session_id: "session-1")) == [
+               {"MCP-Protocol-Version", "2025-06-18"},
+               {"Mcp-Session-Id", "session-1"}
+             ]
+    end
+  end
+
   defp start_client(opts \\ []) do
     opts =
       Keyword.merge(
@@ -450,6 +511,20 @@ defmodule ExMCP.Client.PushTransportTest do
 
     assert_receive {:connected, connection}
     {client, connection}
+  end
+
+  defp modern_request(method, params) do
+    meta = %{
+      "io.modelcontextprotocol/protocolVersion" => "2026-07-28",
+      "io.modelcontextprotocol/clientCapabilities" => %{}
+    }
+
+    Jason.encode!(%{
+      "jsonrpc" => "2.0",
+      "id" => 1,
+      "method" => method,
+      "params" => Map.put(params, "_meta", meta)
+    })
   end
 
   # Establishing the connection reads the deadline too.

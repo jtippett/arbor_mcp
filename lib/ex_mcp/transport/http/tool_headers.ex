@@ -1,5 +1,13 @@
 defmodule ExMCP.Transport.HTTP.ToolHeaders do
-  @moduledoc false
+  @moduledoc """
+  The `x-mcp-header` annotations in tools' input schemas, which a modern
+  (2026-07-28) `tools/call` mirrors as `Mcp-Param-*` headers.
+
+  A custom transport that wants those headers keeps `cache/1` of the tools it
+  has listed and gives it to `ExMCP.Transport.HTTP.RequestHeaders.for_body/3`
+  as `:tool_headers`. The other functions here serve ExMCP's HTTP transport
+  and server.
+  """
 
   require Logger
 
@@ -7,6 +15,7 @@ defmodule ExMCP.Transport.HTTP.ToolHeaders do
 
   @type annotation :: %{header: String.t(), path: [String.t()], type: String.t()}
 
+  @doc false
   @spec compile(map()) :: {:ok, [annotation()]} | {:error, term()}
   def compile(tool) when is_map(tool) do
     case input_schema(tool) do
@@ -23,6 +32,7 @@ defmodule ExMCP.Transport.HTTP.ToolHeaders do
 
   def compile(_tool), do: {:ok, []}
 
+  @doc false
   @spec filter_valid_tools([map()]) :: [map()]
   def filter_valid_tools(tools) when is_list(tools) do
     Enum.filter(tools, fn tool ->
@@ -41,6 +51,10 @@ defmodule ExMCP.Transport.HTTP.ToolHeaders do
     end)
   end
 
+  @doc """
+  The annotations of `tools` (the `tools` of a `tools/list` result), by tool
+  name. A tool whose annotations are invalid is left out.
+  """
   @spec cache([map()]) :: %{optional(String.t()) => [annotation()]}
   def cache(tools) when is_list(tools) do
     Enum.reduce(tools, %{}, fn tool, acc ->
@@ -53,6 +67,7 @@ defmodule ExMCP.Transport.HTTP.ToolHeaders do
     end)
   end
 
+  @doc false
   @spec validate_request([{String.t(), String.t()}], [annotation()], map()) ::
           :ok | {:error, String.t()}
   def validate_request(headers, annotations, arguments)

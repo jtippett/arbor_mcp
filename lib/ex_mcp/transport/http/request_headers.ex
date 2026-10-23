@@ -1,5 +1,12 @@
 defmodule ExMCP.Transport.HTTP.RequestHeaders do
-  @moduledoc false
+  @moduledoc """
+  The MCP headers of a Streamable HTTP request, as ExMCP's own HTTP
+  transport sends them.
+
+  A custom transport that POSTs MCP messages itself builds them with
+  `for_body/3` rather than reimplementing the rules. The other functions
+  here serve ExMCP's HTTP transport and server.
+  """
 
   alias ExMCP.Internal.{Headers, Security, VersionRegistry}
 
@@ -17,6 +24,79 @@ defmodule ExMCP.Transport.HTTP.RequestHeaders do
     "prompts/get" => "name"
   }
 
+  # Content negotiation, which for_body/3 leaves to the caller.
+  @content_headers ["content-type", "accept", "accept-encoding"]
+
+  @doc """
+  The MCP headers for POSTing `body`, an encoded JSON-RPC message.
+
+  The era is read from the body, as the server reads it: a modern
+  (2026-07-28) request carries its version in
+  `params._meta["io.modelcontextprotocol/protocolVersion"]`, as every
+  request ExMCP sends in the modern era does, the `server/discover` probe
+  included. `protocol_version` is the version declared when the body
+  carries none: the one given to `c:ExMCP.Transport.set_protocol_version/2`,
+  or before that the one being offered.
+
+  Returns:
+
+  - `MCP-Protocol-Version`, always.
+  - Modern: `Mcp-Method` for a request, and `Mcp-Name` for `tools/call`,
+    `prompts/get` (`params.name`) and `resources/read` (`params.uri`),
+    encoded as `=?base64?…?=` when the value is not plain printable ASCII.
+    For `tools/call`, an `Mcp-Param-<Header>` for each `x-mcp-header`
+    argument the tool declares, given `:tool_headers`. No session or
+    resumption header, even when given.
+  - Legacy: `Mcp-Session-Id` and `Last-Event-ID` when given.
+
+  Content negotiation (`Content-Type: application/json`,
+  `Accept: application/json, text/event-stream`) is the caller's.
+
+  ## Options
+
+  - `:session_id` - the legacy session (`Mcp-Session-Id`).
+  - `:last_event_id` - the legacy event to resume after (`Last-Event-ID`).
+  - `:tool_headers` - the tools' `x-mcp-header` declarations, as returned by
+    `ExMCP.Transport.HTTP.ToolHeaders.cache/1` from the `tools` of a
+    `tools/list` result. Without it no `Mcp-Param-*` header is sent.
+
+  ## Examples
+
+      iex> body =
+      ...>   Jason.encode!(%{
+      ...>     "jsonrpc" => "2.0",
+      ...>     "id" => 1,
+      ...>     "method" => "tools/call",
+      ...>     "params" => %{
+      ...>       "name" => "météo",
+      ...>       "arguments" => %{},
+      ...>       "_meta" => %{"io.modelcontextprotocol/protocolVersion" => "2026-07-28"}
+      ...>     }
+      ...>   })
+      iex> body |> ExMCP.Transport.HTTP.RequestHeaders.for_body("2026-07-28") |> Enum.sort()
+      [
+        {"MCP-Protocol-Version", "2026-07-28"},
+        {"Mcp-Method", "tools/call"},
+        {"Mcp-Name", "=?base64?bcOpdMOpbw==?="}
+      ]
+  """
+  @spec for_body(binary(), String.t(), keyword()) :: [{String.t(), String.t()}]
+  def for_body(body, protocol_version, opts \\ [])
+      when is_binary(body) and is_binary(protocol_version) do
+    body
+    |> build(%{
+      protocol_version: protocol_version,
+      headers: [],
+      session_id: Keyword.get(opts, :session_id),
+      last_event_id: Keyword.get(opts, :last_event_id),
+      tool_headers: Keyword.get(opts, :tool_headers, %{}),
+      origin: nil,
+      security: nil
+    })
+    |> Enum.reject(fn {name, _value} -> name in @content_headers end)
+  end
+
+  @doc false
   @spec build(binary(), map()) :: [{String.t(), String.t()}]
   def build(body, state) do
     message = decode_message(body)
@@ -51,6 +131,7 @@ defmodule ExMCP.Transport.HTTP.RequestHeaders do
     |> List.insert_at(0, {"accept-encoding", "identity"})
   end
 
+  @doc false
   @spec encode_value(String.t() | integer() | boolean()) :: String.t()
   def encode_value(value) do
     string_value = value_to_string(value)
@@ -62,6 +143,7 @@ defmodule ExMCP.Transport.HTTP.RequestHeaders do
     end
   end
 
+  @doc false
   @spec validate([{String.t(), String.t()}], map()) :: :ok | {:error, String.t()}
   def validate(headers, request) when is_list(headers) and is_map(request) do
     with :ok <- validate_header_bounds(headers),
@@ -76,6 +158,7 @@ defmodule ExMCP.Transport.HTTP.RequestHeaders do
 
   def validate(_headers, _request), do: {:error, "Malformed HTTP request headers"}
 
+  @doc false
   @spec protocol_version(map()) :: String.t() | nil
   def protocol_version(request), do: body_protocol_version(request)
 
@@ -180,6 +263,7 @@ defmodule ExMCP.Transport.HTTP.RequestHeaders do
 
   defp validate_name_header(_headers, _request), do: {:error, "JSON-RPC method is missing"}
 
+  @doc false
   @spec decode_value(String.t()) :: {:ok, String.t()} | {:error, String.t()}
   def decode_value(value) when is_binary(value) do
     cond do

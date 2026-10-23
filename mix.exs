@@ -243,6 +243,8 @@ defmodule ExMCP.MixProject do
           ExMCP.Transport,
           ExMCP.Transport.Stdio,
           ExMCP.Transport.HTTP,
+          ExMCP.Transport.HTTP.RequestHeaders,
+          ExMCP.Transport.HTTP.ToolHeaders,
           ExMCP.Transport.SSEClient,
           ExMCP.Transport.Local
         ],
