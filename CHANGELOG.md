@@ -42,6 +42,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   with the modern version before `subscribe/2`, as it is with the legacy
   version during `initialize`. `ExMCP.Transport.modern_version?/1` tells the
   two apart.
+- In the modern era a custom transport with `cancel_request/2` cancels by
+  closing the request, as modern Streamable HTTP does: `send_cancelled/3`
+  and the end of a `subscriptions/listen` subscription call it instead of
+  sending `notifications/cancelled`, which 2026-07-28 keeps for stdio. The
+  legacy era is unchanged.
 
 ### Fixed
 

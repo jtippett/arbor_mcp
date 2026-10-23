@@ -11,6 +11,7 @@ defmodule ExMCP.Client.PushTransportTest do
   use ExUnit.Case, async: true
 
   alias ExMCP.Client
+  alias ExMCP.Client.Subscription
   alias ExMCP.Error.TransportError
   alias ExMCP.Internal.Headers
   alias ExMCP.Transport.HTTP.RequestHeaders
@@ -614,6 +615,72 @@ defmodule ExMCP.Client.PushTransportTest do
 
       assert_receive {:sent, _connection, %{"method" => "initialize"}, _transport}
       assert_receive {:sent, _connection, %{"method" => "server/discover"}, _transport}
+    end
+
+    test "send_cancelled closes the request through cancel_request/2, without a notification" do
+      {client, connection} = start_client(protocol_mode: :prefer_modern, discover: :modern)
+
+      task =
+        Task.async(fn -> Client.call_tool(client, "slow", %{}, timeout: 2_000, format: :map) end)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => id}, _transport}
+      assert :ok = Client.send_cancelled(client, id, "user cancelled")
+
+      assert_receive {:cancelled, ^connection, ^id}
+      assert {:error, :cancelled} = Task.await(task)
+      refute_received {:sent, ^connection, %{"method" => "notifications/cancelled"}, _transport}
+    end
+
+    test "a request that times out is closed through cancel_request/2, without a notification" do
+      {client, connection} = start_client(protocol_mode: :prefer_modern, discover: :modern)
+
+      assert {:error, :timeout} = Client.call_tool(client, "hold", %{}, timeout: 50, format: :map)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => id}, _transport}
+      assert_receive {:cancelled, ^connection, ^id}, 2_000
+      refute_received {:sent, ^connection, %{"method" => "notifications/cancelled"}, _transport}
+    end
+
+    test "ending a subscription closes its listen request through cancel_request/2" do
+      {client, connection} = start_client(protocol_mode: :prefer_modern, discover: :modern)
+      filter = %{"toolsListChanged" => true}
+
+      task = Task.async(fn -> Client.listen(client, filter) end)
+
+      assert_receive {:sent, ^connection, %{"method" => "subscriptions/listen", "id" => id},
+                      _transport}
+
+      send(
+        client,
+        {:transport_event,
+         notification("notifications/subscriptions/acknowledged", %{
+           "notifications" => filter,
+           "_meta" => %{"io.modelcontextprotocol/subscriptionId" => id}
+         })}
+      )
+
+      assert {:ok, subscription} = Task.await(task)
+      assert :ok = Subscription.cancel(subscription)
+
+      assert_receive {:cancelled, ^connection, ^id}
+      refute_received {:sent, ^connection, %{"method" => "notifications/cancelled"}, _transport}
+    end
+
+    test "in the legacy era send_cancelled sends notifications/cancelled" do
+      {client, connection} = start_client()
+
+      task =
+        Task.async(fn -> Client.call_tool(client, "slow", %{}, timeout: 2_000, format: :map) end)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/call", "id" => id}, _transport}
+      assert :ok = Client.send_cancelled(client, id, "user cancelled")
+
+      assert_receive {:sent, ^connection,
+                      %{"method" => "notifications/cancelled", "params" => %{"requestId" => ^id}},
+                      _transport}
+
+      assert {:error, :cancelled} = Task.await(task)
+      refute_received {:cancelled, ^connection, ^id}
     end
   end
 

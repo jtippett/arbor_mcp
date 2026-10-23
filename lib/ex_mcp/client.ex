@@ -930,9 +930,11 @@ defmodule ExMCP.Client do
   Sends a cancellation notification for a pending request.
 
   For modern streamable HTTP, this closes only the pending request's POST
-  response stream, which is the protocol-defined cancellation signal. Other
-  transports send `notifications/cancelled`. The server MAY stop processing
-  the request if it hasn't completed yet.
+  response stream, which is the protocol-defined cancellation signal; a
+  custom transport in the modern era that implements
+  `c:ExMCP.Transport.cancel_request/2` is asked to do the same through it.
+  Other transports send `notifications/cancelled`. The server MAY stop
+  processing the request if it hasn't completed yet.
 
   ## Parameters
 
@@ -1541,19 +1543,17 @@ defmodule ExMCP.Client do
       | cancelled_requests: MapSet.put(state.cancelled_requests, request_id)
     }
 
-    # Modern streamable HTTP cancels an ordinary request by closing only that
-    # request's response stream. Other transports retain the protocol
-    # cancellation notification.
+    # In the modern era a request over HTTP, or over a custom transport with
+    # cancel_request/2, is cancelled by closing only its response stream.
+    # Other transports retain the protocol cancellation notification.
     updated_state =
-      case updated_state do
-        %{transport_mod: HTTP, transport_state: %HTTP{protocol_era: :modern}} ->
-          RequestHandler.close_request_stream(request_id, updated_state)
+      if RequestHandler.cancels_by_closing?(updated_state) do
+        RequestHandler.close_request_stream(request_id, updated_state)
+      else
+        {:noreply, notified_state} =
+          RequestHandler.handle_cast_notification(method, params, updated_state)
 
-        _other ->
-          {:noreply, notified_state} =
-            RequestHandler.handle_cast_notification(method, params, updated_state)
-
-          notified_state
+        notified_state
       end
 
     # Check if this request is still pending and complete it with :cancelled error

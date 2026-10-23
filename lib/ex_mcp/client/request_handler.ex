@@ -209,22 +209,15 @@ defmodule ExMCP.Client.RequestHandler do
 
   defp send_subscription_request(request, state), do: send_message(request, state)
 
-  defp close_subscription_transport(
-         request_id,
-         _reason,
-         %{
-           transport_mod: HTTP,
-           transport_state: %HTTP{protocol_era: :modern} = transport_state
-         } = state
-       ) do
-    %{state | transport_state: HTTP.close_stream(transport_state, request_id)}
-  end
-
   defp close_subscription_transport(request_id, reason, state) do
-    params = %{"requestId" => request_id}
-    params = if is_binary(reason), do: Map.put(params, "reason", reason), else: params
-    {:noreply, state} = handle_cast_notification("notifications/cancelled", params, state)
-    state
+    if cancels_by_closing?(state) do
+      close_request_stream(request_id, state)
+    else
+      params = %{"requestId" => request_id}
+      params = if is_binary(reason), do: Map.put(params, "reason", reason), else: params
+      {:noreply, state} = handle_cast_notification("notifications/cancelled", params, state)
+      state
+    end
   end
 
   defp send_request(request, method, id, from, state, meta) do
@@ -591,6 +584,23 @@ defmodule ExMCP.Client.RequestHandler do
         end
     end
   end
+
+  @doc false
+  # Whether a request is cancelled by closing its exchange (see
+  # close_request_stream/2) rather than with notifications/cancelled: over
+  # Streamable HTTP, 2026-07-28 keeps the notification for stdio. That holds
+  # for modern HTTP and, in the modern era, for a custom transport with
+  # c:ExMCP.Transport.cancel_request/2.
+  @spec cancels_by_closing?(map()) :: boolean()
+  def cancels_by_closing?(%{transport_mod: HTTP, transport_state: %HTTP{protocol_era: era}}),
+    do: era == :modern
+
+  def cancels_by_closing?(%{transport_mod: transport_mod} = state) when is_atom(transport_mod) do
+    VersionRegistry.modern?(Map.get(state, :protocol_version)) and
+      function_exported?(transport_mod, :cancel_request, 2)
+  end
+
+  def cancels_by_closing?(_state), do: false
 
   @doc false
   def close_request_stream(

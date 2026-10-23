@@ -291,10 +291,18 @@ defmodule ExMCP.Transport do
   times out: the caller has been answered with `{:error, :timeout}`, and a
   response that arrives later is dropped. The transport releases what it
   holds for the request, such as an open response stream. The client does
-  not send `notifications/cancelled` for a timed-out request; a transport
-  that should stop the server's work sends it from here. (A cancellation the
-  caller asks for with `ExMCP.Client.send_cancelled/3` reaches the transport
-  as that notification, through `send_message/2`.)
+  not send `notifications/cancelled` for a timed-out request.
+
+  In the modern era (a version for which `modern_version?/1` is true was
+  given to `set_protocol_version/2`) this is also how the client cancels:
+  over Streamable HTTP, 2026-07-28 cancels a request by closing its response
+  stream and keeps `notifications/cancelled` for stdio. So a cancellation the
+  caller asks for with `ExMCP.Client.send_cancelled/3`, and the end of a
+  `subscriptions/listen` subscription, call this instead of sending the
+  notification; a modern transport whose server does expect the
+  notification sends it from here. In the legacy era, or for a transport
+  without this callback, those reach the transport as
+  `notifications/cancelled`, through `send_message/2`.
   """
   @callback cancel_request(state(), request_id :: ExMCP.Types.request_id()) :: state()
 
