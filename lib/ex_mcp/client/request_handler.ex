@@ -601,7 +601,15 @@ defmodule ExMCP.Client.RequestHandler do
     %{state | transport_state: HTTP.close_stream(transport_state, request_id)}
   end
 
-  def close_request_stream(_request_id, state), do: state
+  # Any other transport gives the request up through its optional
+  # c:ExMCP.Transport.cancel_request/2.
+  def close_request_stream(request_id, %{transport_mod: transport_mod} = state) do
+    if function_exported?(transport_mod, :cancel_request, 2) do
+      %{state | transport_state: transport_mod.cancel_request(state.transport_state, request_id)}
+    else
+      state
+    end
+  end
 
   defp request_stream_error(reason) do
     if ambiguous_stream_break?(reason) do

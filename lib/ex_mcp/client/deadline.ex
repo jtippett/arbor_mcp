@@ -48,10 +48,11 @@ defmodule ExMCP.Client.Deadline do
 
   @doc """
   Caps the synchronous exchanges `transport_mod` makes with `transport_state`
-  at `deadline` (or removes the cap with nil). Only the HTTP transports
-  (Streamable HTTP and the legacy HTTP+SSE POST) send synchronously from the
-  calling process; other transports are returned unchanged and are bounded by
-  their receive timeouts instead.
+  at `deadline` (or removes the cap with nil). Of the built-in transports only
+  HTTP (Streamable HTTP and the legacy HTTP+SSE POST) sends synchronously from
+  the calling process. A custom transport takes the deadline through its
+  optional `c:ExMCP.Transport.put_deadline/2`; any other is returned unchanged
+  and is bounded by its receive timeouts instead.
   """
   @spec put_on_transport(module() | nil, term(), t()) :: term()
   def put_on_transport(HTTP, %HTTP{} = state, deadline), do: HTTP.put_deadline(state, deadline)
@@ -66,7 +67,11 @@ defmodule ExMCP.Client.Deadline do
     }
   end
 
-  def put_on_transport(_transport_mod, transport_state, _deadline), do: transport_state
+  def put_on_transport(transport_mod, transport_state, deadline) do
+    if function_exported?(transport_mod, :put_deadline, 2),
+      do: transport_mod.put_deadline(transport_state, deadline),
+      else: transport_state
+  end
 
   @doc "The deadline currently held by `transport_state`, if any."
   @spec on_transport(module() | nil, term()) :: t()
@@ -77,7 +82,11 @@ defmodule ExMCP.Client.Deadline do
   def on_transport(ReliabilityWrapper, %ReliabilityWrapper{} = state),
     do: on_transport(state.wrapped_module, state.wrapped_state)
 
-  def on_transport(_transport_mod, _transport_state), do: nil
+  def on_transport(transport_mod, transport_state) do
+    if function_exported?(transport_mod, :deadline, 1),
+      do: transport_mod.deadline(transport_state),
+      else: nil
+  end
 
   defp now, do: System.monotonic_time(:millisecond)
 end

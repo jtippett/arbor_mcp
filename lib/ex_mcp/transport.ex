@@ -197,7 +197,64 @@ defmodule ExMCP.Transport do
   Default implementation returns an empty list.
   """
   @callback linked_processes(state()) :: [pid() | port()]
-  @optional_callbacks connected?: 1, capabilities: 1, subscribe: 2, linked_processes: 1
+
+  @doc """
+  Optional: caps the exchanges made with `state` at `deadline`, an absolute
+  `System.monotonic_time(:millisecond)`, or removes the cap when `deadline`
+  is `nil`.
+
+  ExMCP sets a deadline while it establishes the connection, around the
+  `send_message/2` of a request whose caller gave a timeout (restoring the
+  previous value, read with `deadline/1`, as soon as that call returns), and
+  before `close/1`, which is given `ExMCP.Client`'s cleanup budget of one
+  second. A transport that exchanges synchronously in `send_message/2`
+  bounds that exchange by the deadline; one that hands the exchange to
+  another process reads the deadline in `send_message/2` and carries it
+  along.
+
+  Implement it together with `deadline/1`. Without them the transport is
+  bounded only by its own timeouts.
+  """
+  @callback put_deadline(state(), deadline :: integer() | nil) :: state()
+
+  @doc """
+  Optional: the deadline last set with `put_deadline/2`, or `nil`.
+  """
+  @callback deadline(state()) :: integer() | nil
+
+  @doc """
+  Optional: adopts the protocol version the server selected in the
+  `initialize` handshake.
+
+  ExMCP calls it as soon as the `initialize` result arrives, before it sends
+  `notifications/initialized`, so a transport that carries the version on
+  every message it sends (Streamable HTTP's `MCP-Protocol-Version` header)
+  sends the negotiated one from that notification on.
+  """
+  @callback set_protocol_version(state(), version :: String.t()) :: state()
+
+  @doc """
+  Optional: gives up on the response to `request_id`.
+
+  `ExMCP.Client` calls it when a request it sent through this transport
+  times out: the caller has been answered with `{:error, :timeout}`, and a
+  response that arrives later is dropped. The transport releases what it
+  holds for the request, such as an open response stream. The client does
+  not send `notifications/cancelled` for a timed-out request; a transport
+  that should stop the server's work sends it from here. (A cancellation the
+  caller asks for with `ExMCP.Client.send_cancelled/3` reaches the transport
+  as that notification, through `send_message/2`.)
+  """
+  @callback cancel_request(state(), request_id :: ExMCP.Types.request_id()) :: state()
+
+  @optional_callbacks connected?: 1,
+                      capabilities: 1,
+                      subscribe: 2,
+                      linked_processes: 1,
+                      put_deadline: 2,
+                      deadline: 1,
+                      set_protocol_version: 2,
+                      cancel_request: 2
 
   @doc """
   Check if a transport module supports the push (subscribe) model.

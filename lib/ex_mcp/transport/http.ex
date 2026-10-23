@@ -1169,6 +1169,7 @@ defmodule ExMCP.Transport.HTTP do
   # it while establishing a connection and for a request whose caller gave
   # it a timeout, and clears it afterwards.
   @spec put_deadline(t(), integer() | nil) :: t()
+  @impl true
   def put_deadline(%__MODULE__{} = state, deadline) when is_integer(deadline) or is_nil(deadline),
     do: %{state | deadline: deadline}
 

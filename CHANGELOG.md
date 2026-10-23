@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Optional `ExMCP.Transport` callbacks through which a custom transport
+  follows the client: `put_deadline/2` and `deadline/1` receive the
+  deadlines ExMCP already gives its HTTP transports (establishing the
+  connection, a request with a timeout, closing),
+  `set_protocol_version/2` the version negotiated in `initialize`, before
+  `notifications/initialized` is sent, and `cancel_request/2` a request the
+  client gave up on when it timed out. A transport without them behaves as
+  before.
+
 ### Fixed
 
 - A JSON-RPC request or notification that omits `params`, which JSON-RPC 2.0

@@ -436,7 +436,9 @@ defmodule ExMCP.Client.ConnectionManager do
         end
 
       _other ->
-        transport_state
+        if function_exported?(transport_mod, :set_protocol_version, 2),
+          do: transport_mod.set_protocol_version(transport_state, version),
+          else: transport_state
     end
   end
 
