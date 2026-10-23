@@ -25,6 +25,7 @@ defmodule ExMCP.ACP.Adapters.ZCode do
   alias ExMCP.ACP.Adapters.ZCode.{Config, Mapper, Protocol, Sessions}
   alias ExMCP.ACP.{AdapterEvents, Envelope, PendingRequests, PromptQueue}
   alias ExMCP.Internal.Maps
+  alias ExMCP.Internal.WorkspacePath
 
   defstruct [
     :model,
@@ -624,57 +625,13 @@ defmodule ExMCP.ACP.Adapters.ZCode do
         root -> [root]
       end
 
-    path = canonical_path(path)
-
     Enum.any?(roots, fn
       root when is_binary(root) and root != "" ->
-        Path.type(root) == :absolute and path_within?(path, canonical_path(root))
+        Path.type(root) == :absolute and WorkspacePath.within?(path, root)
 
       _invalid ->
         false
     end)
-  end
-
-  defp path_within?(path, root) do
-    relative = Path.relative_to(path, root)
-
-    relative == "." or
-      (Path.type(relative) == :relative and relative != ".." and
-         not String.starts_with?(relative, "../"))
-  end
-
-  defp canonical_path(path), do: resolve_path_components(Path.expand(path), 0)
-
-  defp resolve_path_components(path, depth) when depth >= 40, do: path
-
-  defp resolve_path_components(path, depth) do
-    case Path.split(path) do
-      [base | components] ->
-        Enum.reduce(components, base, &resolve_path_component(&1, &2, depth))
-
-      [] ->
-        path
-    end
-  end
-
-  defp resolve_path_component(component, resolved_parent, depth) do
-    candidate = Path.join(resolved_parent, component)
-
-    case :file.read_link(to_charlist(candidate)) do
-      {:ok, target} -> resolve_link_target(to_string(target), candidate, depth)
-      {:error, _reason} -> candidate
-    end
-  end
-
-  defp resolve_link_target(target, candidate, depth) do
-    target =
-      if Path.type(target) == :absolute,
-        do: target,
-        else: Path.join(Path.dirname(candidate), target)
-
-    target
-    |> Path.expand()
-    |> resolve_path_components(depth + 1)
   end
 
   defp authorize_mcp_servers(nil, _state), do: {:ok, nil}
