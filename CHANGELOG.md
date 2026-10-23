@@ -26,7 +26,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `:http_stream_retry`, like a broken modern HTTP response stream; a closure
   is handled as the connection going down. Events from a `source` that is not
   one of the current transport's `linked_processes/1` are dropped, so a
-  replaced connection cannot disturb its successor.
+  replaced connection cannot disturb its successor. An error status is
+  definite, never reissued, whether reported as `{:http_error, status}` or
+  with what came with it as `{:http_error, status, detail}` (a body, an
+  authentication challenge), which reaches the caller as the error's `cause`.
 
 ### Fixed
 

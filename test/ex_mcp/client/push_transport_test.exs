@@ -328,6 +328,31 @@ defmodule ExMCP.Client.PushTransportTest do
       assert %{connection_status: :ready} = :sys.get_state(client)
     end
 
+    test "an error status with its detail is definite, so even a safe read is not reissued" do
+      {client, connection} = start_client()
+      detail = %{www_authenticate: [~s(Bearer error="insufficient_scope", scope="a b")]}
+
+      task =
+        Task.async(fn ->
+          Client.list_tools(client,
+            timeout: 2_000,
+            http_stream_retry: :safe_only,
+            http_stream_retry_delay: 0
+          )
+        end)
+
+      assert_receive {:sent, ^connection, %{"method" => "tools/list", "id" => id}, _transport}
+      request_event(client, connection, id, {:error, {:http_error, 403, detail}})
+
+      assert {:error,
+              %TransportError{
+                reason: :response_stream_invalid,
+                details: %{cause: {:http_error, 403, ^detail}, delivery: :not_retryable}
+              }} = Task.await(task)
+
+      refute_receive {:sent, ^connection, %{"method" => "tools/list"}, _transport}, 100
+    end
+
     test "a closed connection is closed, fails pending requests, and is replaced" do
       {client, connection} =
         start_client(reconnect: true, reconnect_backoff: [initial: 10, max: 10])

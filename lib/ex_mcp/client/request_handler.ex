@@ -613,8 +613,9 @@ defmodule ExMCP.Client.RequestHandler do
     end
   end
 
-  # A reason that shows how the server answered (an error status, a
-  # malformed or unfinished response) is :response_stream_invalid, which is
+  # A reason that shows how the server answered (an error status, with or
+  # without what came with it, such as the body or a challenge; a malformed
+  # or unfinished response) is :response_stream_invalid, which is
   # never reissued. Any other broke the exchange when the request may have
   # reached the server: ExMCP.Client reissues :response_stream_broken once
   # under http_stream_retry: :at_least_once, and under :safe_only only when
@@ -638,6 +639,7 @@ defmodule ExMCP.Client.RequestHandler do
   end
 
   defp ambiguous_stream_break?({:http_error, _status}), do: false
+  defp ambiguous_stream_break?({:http_error, _status, _detail}), do: false
 
   defp ambiguous_stream_break?(reason)
        when reason in [
