@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   makes optional, was rejected as an invalid message, so `ExMCP.Client`
   ignored it: a server's `ping` sent without `params` went unanswered. It is
   now parsed with empty `params`.
+- `ExMCP.Client` closes its transport whenever it handles the connection
+  going down. It closed it only when a transport process or the receiver
+  crashed; after a closure the transport reported with
+  `{:transport_closed, reason}`, or a missed health check, the old stdio
+  server or HTTP session could keep running beside the reconnected one.
 
 ## [1.7.1] - 2026-10-22
 

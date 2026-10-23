@@ -1878,11 +1878,10 @@ defmodule ExMCP.Client do
   # The receiver reports a closed transport with {:transport_closed, _}
   # before it exits, so its exit while it is still the receiver means it
   # crashed with the connection (a stdio server, an HTTP session) possibly
-  # still up: close that before moving on.
+  # still up; handle_transport_down/2 closes that before moving on.
   def handle_info({:EXIT, pid, reason}, %{receiver_task: %Task{pid: task_pid}} = state)
       when pid == task_pid do
     Logger.error("Receiver task died: #{inspect(reason)}")
-    state = abandon_transport(state)
     {:noreply, handle_transport_down({:receiver_task_died, reason}, state)}
   end
 
@@ -2010,22 +2009,13 @@ defmodule ExMCP.Client do
 
   # A normal exit of a transport-owned process is the transport's own
   # business: it reports a real closure through {:transport_closed, _}. An
-  # abnormal one means the transport broke without saying so, and may still
-  # hold its connection or child process, so it is closed before the client
-  # moves on (and possibly reconnects, which would otherwise leave the old
-  # server running next to the new one).
+  # abnormal one means the transport broke without saying so, and is handled
+  # as a closure.
   defp handle_transport_link_exit(_from, :normal, state), do: {:noreply, state}
 
   defp handle_transport_link_exit(_from, reason, state) do
     Logger.error("Transport forwarder died: #{inspect(reason)}")
-    state = abandon_transport(state)
     {:noreply, handle_transport_down({:transport_forwarder_died, reason}, state)}
-  end
-
-  defp abandon_transport(state) do
-    state = retire_links(state)
-    close_transport(state)
-    state
   end
 
   # Remembers the links of the transport and receiver this client is about
@@ -2092,7 +2082,12 @@ defmodule ExMCP.Client do
   end
 
   defp handle_transport_down(reason, state) do
+    # However the transport failed, it may still hold its connection or child
+    # process (an HTTP session, a stdio server), so it is closed before the
+    # client moves on: a reconnect would otherwise leave the old one running
+    # next to the new one.
     state = retire_links(state)
+    close_transport(state)
 
     state =
       retire_callback_work(state, Error.connection_error("Transport closed: #{inspect(reason)}"))

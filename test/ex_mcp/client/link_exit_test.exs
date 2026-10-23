@@ -126,6 +126,16 @@ defmodule ExMCP.Client.LinkExitTest do
         assert %{connection_status: :disconnected} = :sys.get_state(client)
         assert Process.alive?(client)
       end
+
+      test "a reported transport closure closes the transport" do
+        client = start_client(unquote(transport))
+        attach_disconnected(client)
+
+        send(client, {:transport_closed, :peer_went_away})
+
+        assert_receive {:client_disconnected, :peer_went_away}, 2_000
+        assert_receive {:link_transport_closed, ^client}, 2_000
+      end
     end
   end
 
@@ -139,6 +149,7 @@ defmodule ExMCP.Client.LinkExitTest do
     assert_receive {:client_disconnected, {:receiver_task_died, :killed}}, 2_000
     assert_receive {:link_transport_closed, ^client}, 2_000
     assert %{connection_status: :disconnected} = :sys.get_state(client)
+    refute_received {:link_transport_closed, ^client}
   end
 
   test "a transport-owned link's crash is a transport failure, not a stop" do
@@ -151,6 +162,7 @@ defmodule ExMCP.Client.LinkExitTest do
     assert_receive {:client_disconnected, {:transport_forwarder_died, :helper_crashed}}, 2_000
     assert_receive {:link_transport_closed, ^client}, 2_000
     assert %{connection_status: :disconnected} = :sys.get_state(client)
+    refute_received {:link_transport_closed, ^client}
   end
 
   test "a transport-owned link's normal exit is left to the transport" do
