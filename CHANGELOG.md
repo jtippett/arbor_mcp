@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Security:** `ExMCP.Internal.WorkspacePath.canonical/1` resolves symlinks
+  before applying `..`, the way the kernel does. A path such as
+  `<root>/link/../secret`, where `link` points outside the workspace,
+  previously passed `within?/2` — and so the ACP client's `fs/read_text_file`,
+  `fs/write_text_file` and `terminal/create` authorization and the Codex and
+  ZCode `:workspace_roots` checks — while the file actually opened lived
+  outside the root. ZCode now uses the shared module instead of a private copy.
+- **Security:** a project's `.pi/settings.json` can no longer choose the
+  executable the Pi ACP adapter spawns. `piCommand` is honored from adapter
+  options (`:cli_path`/`:pi_command`), `PI_ACP_PI_COMMAND` or the global agent
+  settings only. Previously an untrusted repository could run an arbitrary
+  program at `session/new`.
+- **Security:** the Pi edit-snapshot workspace root is the host-supplied
+  session `cwd` (`workspace_root`); the `cwd` the agent reports in `get_state`
+  no longer replaces it, so an agent cannot widen the 1.7.1 snapshot
+  containment. The reported `cwd` is still used for session bookkeeping.
+- **Security:** Codex gateway `authenticate` requires `adapter_opts[:gateway_auth]`
+  (matching what `auth_methods/1` advertises) and an https or loopback
+  `baseUrl`; it previously redirected model traffic and headers to any
+  client-named URL regardless of the option.
+
 ## [1.7.1] - 2026-10-22
 
 ### Fixed

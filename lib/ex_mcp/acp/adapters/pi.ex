@@ -55,6 +55,8 @@ defmodule ExMCP.ACP.Adapters.Pi do
     prelude_lines: [],
     startup_sent?: false,
     last_session_cwd: nil,
+    # Host-authorized session cwd; never derived from what the agent reports.
+    workspace_root: nil,
     settings: %{},
     pending_prompt: nil,
     prompt_queue: PromptQueue.new(),
@@ -80,6 +82,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
        session_dir: Keyword.get(opts, :session_dir),
        session_map_path: Keyword.get(opts, :session_map_path, SessionStore.default_map_path()),
        cwd: Keyword.get(opts, :cwd),
+       workspace_root: Keyword.get(opts, :cwd),
        last_session_cwd: Keyword.get(opts, :cwd)
      }}
   end
@@ -192,7 +195,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   def translate_outbound(%{"method" => "authenticate"}, state), do: {:reply, %{}, state}
 
   def translate_outbound(%{"method" => "session/new", "id" => acp_id, "params" => params}, state) do
-    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
+    cwd = params["cwd"] || state.workspace_root || Keyword.get(state.opts, :cwd) || File.cwd!()
 
     case Sessions.require_absolute_cwd(cwd) do
       :ok -> start_session_new(acp_id, cwd, state)
@@ -371,6 +374,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
      %{
        state
        | cwd: cwd,
+         workspace_root: cwd,
          settings: settings,
          last_session_cwd: cwd,
          startup_sent?: false,
@@ -386,6 +390,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
       |> close_active_session()
       |> Map.merge(%{
         cwd: cwd,
+        workspace_root: cwd,
         settings: settings,
         last_session_cwd: cwd,
         startup_sent?: false,
@@ -592,7 +597,7 @@ defmodule ExMCP.ACP.Adapters.Pi do
   # replayed, which also decides whether `get_messages` joins the control group.
   defp start_session_switch(acp_id, params, replay?, state) do
     session_id = params["sessionId"]
-    cwd = params["cwd"] || state.cwd || Keyword.get(state.opts, :cwd) || File.cwd!()
+    cwd = params["cwd"] || state.workspace_root || Keyword.get(state.opts, :cwd) || File.cwd!()
 
     with :ok <- Sessions.require_absolute_cwd(cwd),
          session_file when is_binary(session_file) <- find_session_file(session_id, state),
@@ -1361,6 +1366,11 @@ defmodule ExMCP.ACP.Adapters.Pi do
         settings: settings
       })
 
+    # The cwd the agent reports is bookkeeping only. Edit-snapshot containment
+    # keeps the host-authorized session cwd so a misbehaving agent cannot
+    # widen its own workspace root.
+    state = %{state | workspace_root: group.cwd || state.workspace_root}
+
     replay = replay_messages_for(group, session_id)
     response = Sessions.session_response(group.acp_id, session_id, session_file, models, modes)
     {startup_messages, state} = startup_messages(session_id, cwd, state, settings)
@@ -1424,8 +1434,9 @@ defmodule ExMCP.ACP.Adapters.Pi do
 
   defp maybe_snapshot_edit(_tool_call_id, _tool_name, _args, state), do: {nil, state}
 
-  defp snapshot_path(path, state) do
-    root = state.cwd || File.cwd!()
+  defp snapshot_path(_path, %{workspace_root: nil}), do: :error
+
+  defp snapshot_path(path, %{workspace_root: root}) do
     lexical = if Path.type(path) == :absolute, do: path, else: Path.expand(path, root)
     abs = WorkspacePath.canonical(lexical)
 
