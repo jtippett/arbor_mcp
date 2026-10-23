@@ -45,6 +45,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A transport's error at the `server/discover` probe reached `start_link/1`
+  as a string (`{:transport_connect_failed, "{:era_probe_failed, …}"}`), so
+  a refused login was as opaque there as it had been at `initialize`. It is
+  now `{:transport_connect_failed, reason}` with the transport's own reason,
+  whether the probe was the only attempt, the modern era was pinned, or it
+  was the attempt one era fell back to. When the probe falls back to an
+  `initialize` that the transport fails, it is the `initialize`'s reason.
 - An HTTP 400, 404 or 405 to the probe whose body came in a detail map,
   `{:http_error, status, %{body: body, …}}`, was not read: a JSON-RPC
   error in it was ignored, so an unsupported-version error (`-32022` with

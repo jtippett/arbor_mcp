@@ -1187,6 +1187,32 @@ defmodule ExMCP.Client do
     {:transport_connect_failed, details}
   end
 
+  # A transport's error at the server/discover probe is kept as a term too.
+  # When one era's attempt falls back to the other's, the second attempt's
+  # error is the one surfaced: the fallback was taken only because the first
+  # failed with protocol evidence, never with a transport error.
+  defp normalize_connection_error({:era_probe_failed, {:transport_error, details}}) do
+    {:transport_connect_failed, details}
+  end
+
+  defp normalize_connection_error(
+         {:pinned_modern_era_probe_failed, %{probe: {:transport_error, details}}}
+       ) do
+    {:transport_connect_failed, details}
+  end
+
+  defp normalize_connection_error(
+         {:era_probe_and_initialize_failed, %{initialize: {:transport_error, details}}}
+       ) do
+    {:transport_connect_failed, details}
+  end
+
+  defp normalize_connection_error(
+         {:initialize_and_era_probe_failed, %{probe: {:transport_error, details}}}
+       ) do
+    {:transport_connect_failed, details}
+  end
+
   defp normalize_connection_error({:method_not_found, message}) do
     {:initialize_error, %{"code" => ErrorCodes.method_not_found(), "message" => message}}
   end

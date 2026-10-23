@@ -554,6 +554,67 @@ defmodule ExMCP.Client.PushTransportTest do
       assert_receive {:sent, _connection, %{"method" => "server/discover"}, _transport}
       refute_receive {:sent, _connection, %{"method" => "initialize"}, _transport}, 100
     end
+
+    for status <- [401, 403] do
+      test "a probe refused with HTTP #{status} fails start_link with the refusal intact" do
+        Process.flag(:trap_exit, true)
+        challenge = ~s(Bearer error="invalid_token", resource_metadata="https://auth.example/r")
+        refusal = {:http_error, unquote(status), %{www_authenticate: [challenge], body: "no"}}
+
+        assert {:error, {:transport_connect_failed, ^refusal}} =
+                 Client.start_link(client_opts(discover: {:refuse, refusal}))
+
+        assert_receive {:sent, _connection, %{"method" => "server/discover"}, _transport}
+        refute_receive {:sent, _connection, %{"method" => "initialize"}, _transport}, 100
+      end
+    end
+
+    test "an initialize refused after the fallback fails start_link with its refusal intact" do
+      Process.flag(:trap_exit, true)
+      refusal = {:http_error, 401, %{www_authenticate: [~s(Bearer error="invalid_token")]}}
+
+      assert {:error, {:transport_connect_failed, ^refusal}} =
+               Client.start_link(
+                 client_opts(
+                   discover: {:reject, 404, %{"code" => -32601, "message" => "Not found"}},
+                   handshake_error: refusal
+                 )
+               )
+
+      assert_receive {:sent, _connection, %{"method" => "initialize"}, _transport}
+    end
+
+    test "a probe refused where the modern era was observed keeps the refusal intact" do
+      Process.flag(:trap_exit, true)
+      opts = [era_cache_key: make_ref()]
+
+      {client, _connection} =
+        start_client(opts ++ [protocol_mode: :prefer_modern, discover: :modern])
+
+      Client.stop(client)
+
+      refusal = {:http_error, 403, %{www_authenticate: [~s(Bearer error="insufficient_scope")]}}
+
+      assert {:error, {:transport_connect_failed, ^refusal}} =
+               Client.start_link(client_opts(opts ++ [discover: {:refuse, refusal}]))
+    end
+
+    test "a probe refused after initialize was rejected keeps the refusal intact" do
+      Process.flag(:trap_exit, true)
+      refusal = {:http_error, 401, %{www_authenticate: [~s(Bearer error="invalid_token")]}}
+
+      assert {:error, {:transport_connect_failed, ^refusal}} =
+               Client.start_link(
+                 client_opts(
+                   protocol_mode: :prefer_legacy,
+                   initialize_error: %{"code" => -32601, "message" => "Method not found"},
+                   discover: {:refuse, refusal}
+                 )
+               )
+
+      assert_receive {:sent, _connection, %{"method" => "initialize"}, _transport}
+      assert_receive {:sent, _connection, %{"method" => "server/discover"}, _transport}
+    end
   end
 
   describe "request headers for a custom transport" do
